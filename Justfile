@@ -57,3 +57,14 @@ data-tissue:
 
 serve-llm model="models/llm/openbiollm-llama3-8b.Q5_K_M.gguf":
     llama-server -m {{model}} --host 127.0.0.1 --port 8080 -ngl 999
+
+# --- phase 5 ---------------------------------------------------------------
+
+# Freeze the Part 1 synthesis protocol (prompt, schemas, decoding, model
+# hashes, benchmark, scoring, winner rule, lifecycle). No LLM is run.
+freeze-phase5:
+    /tmp/run_python.sh scripts/phase5_protocol.py freeze
+
+# Verify the frozen Part 1 protocol without running any LLM.
+verify-phase5:
+    /tmp/run_python.sh scripts/phase5_protocol.py verify

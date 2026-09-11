@@ -1,0 +1,13 @@
+{
+  "backend": "llama.cpp local llama-server",
+  "context": 8192,
+  "endpoint": "http://127.0.0.1:8080/v1/chat/completions",
+  "microstat": 0,
+  "mirostat": 0,
+  "n_predict": 1024,
+  "response_format": {"type": "json_object"},
+  "seed": 20260911,
+  "temperature": 0.0,
+  "top_k": 1,
+  "top_p": 1.0
+}

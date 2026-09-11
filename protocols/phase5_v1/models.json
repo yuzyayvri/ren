@@ -1,0 +1,21 @@
+{
+  "models": [
+    {
+      "name": "medgemma-1.5-4b-it",
+      "filename": "medgemma-1.5-4b-it-Q5_K_M.gguf",
+      "repository": "unsloth/medgemma-1.5-4b-it-GGUF",
+      "revision": "3855f948626b7ae42bccd082757f15078c53e758",
+      "bytes": 2829699136,
+      "sha256": "1085085f6186e09f075dce216048e5b063ba419a5f8286d0cd66c74a4bb155d8"
+    },
+    {
+      "name": "openbiollm-llama3-8b",
+      "filename": "openbiollm-llama3-8b.Q5_K_M.gguf",
+      "repository": "aaditya/OpenBioLLM-Llama3-8B-GGUF",
+      "revision": null,
+      "bytes": 5733499776,
+      "sha256": "1753c629bf99c261e8b92498d813f382f811e903cdc0e685a11d1689612b34ce",
+      "note": "acquisition manifest covers medgemma only; hashed directly"
+    }
+  ]
+}

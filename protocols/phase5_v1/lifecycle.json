@@ -1,0 +1,10 @@
+{
+  "rules": [
+    "Part 1 freezes prompt, schemas, decoding, model hashes, benchmark, scoring, winner rule, and lifecycle before any candidate output is exposed.",
+    "Part 2 uses only the development set for comparison under the frozen protocol.",
+    "The final acceptance set is opened exactly once in Part 3 under a lifecycle ledger entry bound to all relevant hashes.",
+    "No tuning against the final set. Any rerun requires review and a new ledger entry.",
+    "Phase 4 v3 artifacts remain immutable and are consumed read-only."
+  ],
+  "status": "frozen_part1_no_candidate_output"
+}
