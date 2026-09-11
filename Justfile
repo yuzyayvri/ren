@@ -77,3 +77,14 @@ compare-phase5:
 # Aggregate saved comparison runs without touching any server.
 score-phase5:
     /tmp/run_python.sh scripts/phase5_compare.py score
+
+# Freeze/verify the revised v2 synthesis protocol (no LLM is run).
+freeze-phase5-v2:
+    /tmp/run_python.sh scripts/phase5_protocol.py freeze-v2
+
+verify-phase5-v2:
+    /tmp/run_python.sh scripts/phase5_protocol.py verify-v2
+
+# Synthetic smoke gate per candidate (mechanism check only, never scored).
+smoke-phase5 candidate:
+    /tmp/run_python.sh scripts/phase5_compare.py smoke --candidate {{candidate}} --protocol phase5_v2

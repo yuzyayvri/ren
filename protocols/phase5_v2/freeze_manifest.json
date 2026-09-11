@@ -1,0 +1,21 @@
+{
+  "files": {
+    "decoding.json": "5c170a5cb64285af7b6869dccaabe98341f2b5f9787af14c54b4771f84bfae22",
+    "prompt.md": "c18e70274986e79eb2db02b558454ca05887d0719245a08cc37b883794a774c6",
+    "response_schema.json": "9d6f96153b2aef7b092896e4570d23822ebc1e6e2e553fbdb2d2ea631d3dbfd5",
+    "smoke_packet.json": "f24d89ac4cff56d8fcd1600d756eef379f7ec10d98f4b1007596d2bbcc777759"
+  },
+  "references": {
+    "benchmark_dev.json": "60f2b5d767808ba49c889cc8aab21ee55ad4f3bab0e1fa3591726782875d9908",
+    "benchmark_final.json": "2ff8ace88e9e817604dd9ff0c77dcf3ed7b6b05682a4bd6480934daf23070c47",
+    "lifecycle.json": "7f11514bab08638eae7fc11e1e17bfbb2d60345cae663c6e83c31e2ee9708503",
+    "models.json": "9f1eb6185cb32906f26bac3447ef01984908e9e6711161246c19ee50ab627600",
+    "scoring.json": "ced84f837f40a849ef5903e67669bfd98a46d09e68efae8682117ace39d05365",
+    "winner_rule.json": "69c64681e2b0367d5ce1d817b5bb700469e53516d9bf35f0c5250c93e4cf0a55"
+  },
+  "schema": "phase5-freeze-v2",
+  "status": "frozen_v2_no_candidate_output",
+  "supersedes": {
+    "phase5_freeze_v1_manifest_sha256": "b272edb3e3d536786493d392748c62702f9279647d96d6468b330d4de62529f9"
+  }
+}

@@ -129,3 +129,77 @@ def test_package_conceals_identities(tmp_path):
     assert "candidate-x" not in a_text and "candidate-y" not in a_text
     mapping = json.loads(paths["mapping"].read_text())
     assert set(mapping.values()) == {"candidate-x", "candidate-y"}
+
+
+def test_response_format_passthrough():
+    from scripts.phase5_client import build_request
+
+    packet = {"schema": "phase5-packet-v1", "case_id": "c", "source_stage": "phase3-txl",
+              "findings": [], "context": [], "limitations": []}
+    v2dec = {"temperature": 0.0, "top_k": 1, "top_p": 1.0, "seed": 1, "n_predict": 8,
+             "response_format": {"type": "json_schema", "json_schema": {"schema": {"type": "object"}}}}
+    payload = build_request("sys", packet, v2dec, "m")
+    assert payload["response_format"]["type"] == "json_schema"
+    payload = build_request("sys", packet, {"temperature": 0.0, "top_k": 1, "top_p": 1.0,
+                                            "seed": 1, "n_predict": 8}, "m")
+    assert payload["response_format"] == {"type": "json_object"}
+
+
+def test_raw_content_preserved_on_parse_failure(tmp_path, monkeypatch):
+    prose = "thought\nThis model writes prose instead of JSON."
+
+    def transport(url, payload, timeout):
+        return {"choices": [{"message": {"content": prose}}]}
+
+    monkeypatch.setattr(compare, "preflight",
+                        lambda m: {"filename": "m.gguf", "bytes": 1, "sha256": "s", "name": "m"})
+    record = compare.run_candidate(_model(), transport=transport, repeats=1, out_root=tmp_path)
+    assert len(record["generations"]) == 8
+    for entry in record["generations"]:
+        assert entry["status"] == "failed"
+        assert entry["raw_content"] == prose
+
+
+def test_smoke_guard_rejects_eligible_fixture(tmp_path, monkeypatch):
+    fixture = tmp_path / "smoke_packet.json"
+    fixture.write_text(json.dumps({"selection_eligible": True}))
+    monkeypatch.setattr(compare, "preflight",
+                        lambda m: {"filename": "m.gguf", "bytes": 1, "sha256": "s", "name": "m"})
+    with pytest.raises(compare.ComparisonError):
+        compare.smoke(_model(), out_root=tmp_path, fixture_path=fixture)
+
+
+def test_score_ignores_smoke_records(tmp_path, monkeypatch, capsys):
+    import sys
+
+    run_dir = tmp_path / "candidate-x"
+    run_dir.mkdir()
+    (run_dir / "run.json").write_text(json.dumps({
+        "candidate": {"name": "candidate-x"}, "repeats": 1, "generations": []}))
+    smoke_dir = tmp_path / "smoke"
+    smoke_dir.mkdir()
+    (smoke_dir / "candidate-x.json").write_text(json.dumps({"selection_eligible": False}))
+    monkeypatch.setattr(sys, "argv", ["phase5_compare.py", "score", "--out-root", str(tmp_path)])
+    assert compare.main() == 0
+    out = capsys.readouterr().out
+    assert "candidate-x" in out
+
+
+def test_lifecycle_v2_events(tmp_path):
+    ledger = tmp_path / "lifecycle.jsonl"
+    compare.append_lifecycle("part1_superseded", {"a": 1}, ledger=ledger)
+    compare.append_lifecycle("phase5_v2_frozen", {"b": 2}, ledger=ledger)
+    text = ledger.read_text()
+    assert "part1_superseded" in text and "phase5_v2_frozen" in text
+
+
+def test_response_schema_enforces_shape():
+    import json
+    from pathlib import Path
+
+    schema = json.loads(Path("protocols/phase5_v2/response_schema.json").read_text())
+    assert schema["properties"]["schema"] == {"const": "phase5-response-v1"}
+    assert schema["additionalProperties"] is False
+    claim = schema["properties"]["claims"]["items"]
+    assert claim["additionalProperties"] is False
+    assert set(claim["required"]) == {"claim_id", "evidence_ids", "finding_ids", "text"}
