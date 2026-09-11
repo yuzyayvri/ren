@@ -203,3 +203,24 @@ def test_response_schema_enforces_shape():
     claim = schema["properties"]["claims"]["items"]
     assert claim["additionalProperties"] is False
     assert set(claim["required"]) == {"claim_id", "evidence_ids", "finding_ids", "text"}
+
+
+def test_relative_out_root_resolves_under_repo(tmp_path, monkeypatch):
+    import shutil
+    from pathlib import Path
+
+    target = compare.ROOT / "rel-out-test-residue"
+    monkeypatch.setattr(compare, "preflight",
+                        lambda m: {"filename": "m.gguf", "bytes": 1, "sha256": "s", "name": "m"})
+
+    def transport(url, payload, timeout):
+        raise RuntimeError("down")
+
+    try:
+        record = compare.run_candidate(_model(), transport=transport, repeats=1,
+                                       out_root=Path("rel-out-test-residue"))
+        assert (target / "m" / "run.json").is_file()
+        assert record["generations"] and all(g["status"] == "failed" for g in record["generations"])
+    finally:
+        shutil.rmtree(target, ignore_errors=True)
+    assert record["generations"] and all(g["status"] == "failed" for g in record["generations"])

@@ -161,9 +161,12 @@ def run_candidate(
     base_url = f"http://127.0.0.1:{PORT}"
     begun = time.time()
     generations: list[dict[str, Any]] = []
+    out = out_root or OUT
+    if not out.is_absolute():
+        out = ROOT / out
 
     if transport is None:
-        log_path = (out_root or OUT) / model["name"] / "server.log"
+        log_path = out / model["name"] / "server.log"
         with serving(model["filename"], server_bin, ngl, log_path) as (url, binary, model_path):
             client = SynthesisClient(url, model["filename"], decoding,
                                      system_prompt, timeout_s=timeout_s)
@@ -191,7 +194,7 @@ def run_candidate(
         "begun_unix": begun,
         "generations": generations,
     }
-    out_path = (out_root or OUT) / model["name"] / "run.json"
+    out_path = out / model["name"] / "run.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n",
                         encoding="utf-8")
@@ -355,6 +358,8 @@ def smoke(model: dict[str, Any], proto: str = "phase5_v2",
     from scripts.phase5_validate import ResponseError, validate_response
 
     out = out_root or OUT2
+    if not out.is_absolute():
+        out = ROOT / out
     fixture_path = fixture_path or protocol_dir(proto) / "smoke_packet.json"
     fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
     if fixture.get("selection_eligible", True):
