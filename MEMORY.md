@@ -830,3 +830,13 @@ sanctioned bound-load path) with regression tests, including bound
 symbolic output byte-identical to the sealed v3 ranking. Consumers must
 use the bound loader; the plain default path still raises by design.
 
+## Phase 5 Part 2 comparison stop (2026-09-11)
+
+Both candidates ran all 24 dev generations under the frozen protocol and
+both are ineligible: valid structured-response rate 0.0 each. MedGemma
+emitted prose in all 24; OpenBioLLM emitted near-JSON with wrong field
+names, missing case_id, or truncation. Per the frozen winner rule the
+phase stops with no winner and no gate weakening; Part 3 is blocked on a
+prompt/decoding re-freeze decision. Records in
+artifacts/phase5_comparison_v1/; lifecycle event part2_stopped.
+
