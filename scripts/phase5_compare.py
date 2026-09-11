@@ -468,7 +468,7 @@ def main() -> int:
         if set(runs) != {"openbiollm-llama3-8b", "medgemma-1.5-4b-it"}:
             raise ComparisonError("both candidate runs must exist before packaging review")
         order = sorted(runs)
-        paths = package_review(runs, order)
+        paths = package_review(runs, order, out_root=out)
         print(json.dumps({k: str(v) for k, v in paths.items()}, indent=2))
         return 0
     raise AssertionError("unreachable")

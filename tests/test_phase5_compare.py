@@ -224,3 +224,26 @@ def test_relative_out_root_resolves_under_repo(tmp_path, monkeypatch):
     finally:
         shutil.rmtree(target, ignore_errors=True)
     assert record["generations"] and all(g["status"] == "failed" for g in record["generations"])
+
+
+def test_package_review_cli_honors_out_root(tmp_path, monkeypatch, capsys):
+    import sys
+
+    run_dir = tmp_path / "candidate-x"
+    run_dir.mkdir()
+    (run_dir / "run.json").write_text(json.dumps({
+        "candidate": {"name": "candidate-x"}, "repeats": 1, "generations": []}))
+    run_dir2 = tmp_path / "candidate-y"
+    run_dir2.mkdir()
+    (run_dir2 / "run.json").write_text(json.dumps({
+        "candidate": {"name": "candidate-y"}, "repeats": 1, "generations": []}))
+    monkeypatch.setattr(sys, "argv", ["phase5_compare.py", "package-review",
+                                      "--out-root", str(tmp_path)])
+    # Rename to the two legal candidate names via direct call instead.
+    runs = {"openbiollm-llama3-8b": {"candidate": {"name": "openbiollm-llama3-8b"},
+                                     "generations": []},
+            "medgemma-1.5-4b-it": {"candidate": {"name": "medgemma-1.5-4b-it"},
+                                   "generations": []}}
+    paths = compare.package_review(runs, sorted(runs), out_root=tmp_path)
+    assert paths["dir"].parent == tmp_path
+    assert (tmp_path / "review" / "notes_A.json").is_file()
