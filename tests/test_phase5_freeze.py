@@ -45,3 +45,22 @@ def test_fixture_go_ids_resolve_in_sealed_v3_corpus():
 
 def test_lifecycle_genesis_present():
     assert "part1_frozen" in (PROTO / "lifecycle.jsonl").read_text()
+
+
+def test_v3_freeze_round_trip():
+    import json
+    from pathlib import Path
+
+    from scripts.phase5_protocol import verify_v2, verify_v3
+
+    assert verify_v2()["status"] == "verified"
+    assert verify_v3()["status"] == "verified"
+    v3 = json.loads(Path("protocols/phase5_v3/freeze_manifest.json").read_text())
+    v2dec = json.loads(Path("protocols/phase5_v2/decoding.json").read_text())
+    v3dec = json.loads(Path("protocols/phase5_v3/decoding.json").read_text())
+    assert v3dec["n_predict"] == 2048
+    assert {k: v for k, v in v3dec.items() if k != "n_predict"} == {
+        k: v for k, v in v2dec.items() if k != "n_predict"}
+    assert v3["supersedes"]["phase5_freeze_v2_manifest_sha256"]
+    ledger = Path("protocols/phase5_v1/lifecycle.jsonl").read_text()
+    assert "phase5_v3_frozen" in ledger

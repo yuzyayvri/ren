@@ -287,6 +287,86 @@ def check_v2_decoding_sync() -> None:
         raise RuntimeError("decoding.json embedded schema drifted from response_schema.json")
 
 
+V3DIR = ROOT / "protocols" / "phase5_v3"
+
+V3_FILES = ("prompt.md", "decoding.json")
+
+# v3 changes only the output budget (n_predict 1024 -> 2048) for real
+# specimens. Everything else is carried forward by hash reference.
+V3_REFERENCES_V2 = (
+    "prompt.md",
+    "response_schema.json",
+    "smoke_packet.json",
+    "freeze_manifest.json",
+)
+
+
+def check_v3_decoding_sync() -> None:
+    schema = json.loads((V2DIR / "response_schema.json").read_text(encoding="utf-8"))
+    decoding = json.loads((V3DIR / "decoding.json").read_text(encoding="utf-8"))
+    base = json.loads((V2DIR / "decoding.json").read_text(encoding="utf-8"))
+    if decoding.get("response_format") != {"type": "json_schema", "json_schema": {"schema": schema}}:
+        raise RuntimeError("v3 decoding embedded schema drifted from v2 response_schema.json")
+    for key in ("temperature", "top_k", "top_p", "seed", "context", "endpoint",
+                "microstat", "mirostat", "response_format"):
+        if key in base and decoding.get(key) != base[key]:
+            raise RuntimeError(f"v3 decoding changed frozen key: {key}")
+    if decoding.get("n_predict") != 2048:
+        raise RuntimeError("v3 decoding must set n_predict 2048")
+
+
+def freeze_v3() -> dict[str, object]:
+    from scripts.phase5_compare import append_lifecycle
+
+    verify_v2()
+    check_v3_decoding_sync()
+    v2_manifest_sha = sha256_path(V2DIR / "freeze_manifest.json")
+    manifest = {
+        "schema": "phase5-freeze-v3",
+        "files": {name: sha256_path(V3DIR / name) for name in V3_FILES},
+        "references": {name: sha256_path(V2DIR / name) for name in V3_REFERENCES_V2},
+        "supersedes": {"phase5_freeze_v2_manifest_sha256": v2_manifest_sha},
+        "status": "frozen_v3_no_candidate_output",
+    }
+    new_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
+    manifest_path = V3DIR / "freeze_manifest.json"
+    if not (manifest_path.is_file() and manifest_path.read_bytes() == new_bytes):
+        manifest_path.write_bytes(new_bytes)
+        manifest_sha = sha256_path(manifest_path)
+        append_lifecycle("phase5_v2_superseded", {
+            "superseded_manifest_sha256": v2_manifest_sha,
+            "superseding_manifest_sha256": manifest_sha,
+            "note": "v2 remains valid history; v3 governs forward work.",
+        })
+        append_lifecycle("phase5_v3_frozen", {
+            "manifest_sha256": manifest_sha,
+            "note": "Output budget raised for real specimens; no candidate output exposed.",
+        })
+        manifest["manifest_sha256"] = manifest_sha
+    else:
+        manifest["manifest_sha256"] = sha256_path(manifest_path)
+    return manifest
+
+
+def verify_v3() -> dict[str, object]:
+    manifest_path = V3DIR / "freeze_manifest.json"
+    if not manifest_path.is_file():
+        raise RuntimeError("v3 protocol is not frozen; run freeze-v3 first")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    actual = {name: sha256_path(V3DIR / name) for name in V3_FILES}
+    if actual != manifest["files"]:
+        raise RuntimeError("v3 protocol files differ from frozen manifest")
+    verify_v2()
+    check_v3_decoding_sync()
+    references = {name: sha256_path(V2DIR / name) for name in V3_REFERENCES_V2}
+    if references != manifest["references"]:
+        raise RuntimeError("v2 references changed since v3 freeze")
+    ledger = (PROTO / "lifecycle.jsonl").read_text(encoding="utf-8")
+    if "phase5_v3_frozen" not in ledger:
+        raise RuntimeError("v3 lifecycle events are missing")
+    return {"status": "verified"}
+
+
 def freeze_v2() -> dict[str, object]:
     from scripts.phase5_compare import append_lifecycle
 
@@ -352,6 +432,8 @@ def main() -> int:
     verify_cmd.add_argument("--rehash-models", action="store_true")
     sub.add_parser("freeze-v2")
     sub.add_parser("verify-v2")
+    sub.add_parser("freeze-v3")
+    sub.add_parser("verify-v3")
     args = parser.parse_args()
     if args.command == "freeze":
         result = freeze(rehash_openbiollm=args.rehash_openbiollm)
@@ -359,6 +441,10 @@ def main() -> int:
         result = verify(rehash_models=args.rehash_models)
     elif args.command == "freeze-v2":
         result = freeze_v2()
+    elif args.command == "freeze-v3":
+        result = freeze_v3()
+    elif args.command == "verify-v3":
+        result = verify_v3()
     else:
         result = verify_v2()
     print(json.dumps(result, indent=2, sort_keys=True))

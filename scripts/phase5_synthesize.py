@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-PROTO = ROOT / "protocols" / "phase5_v2"
+PROTO = ROOT / "protocols" / "phase5_v3"
 V1 = ROOT / "protocols" / "phase5_v1"
 OUT = ROOT / "artifacts" / "phase5_synthesis"
 WINNER = "medgemma-1.5-4b-it"
