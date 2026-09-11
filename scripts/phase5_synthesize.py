@@ -151,6 +151,7 @@ def synthesize_packet(packet: dict[str, Any], base_url: str,
     started = time.monotonic()
     result: dict[str, Any] = {
         "schema": "phase5-production-v1",
+        "packet": packet,
         "model": {"name": model["name"], "filename": model["filename"],
                   "sha256": model["sha256"]},
         "prompt_sha256": sha256_bytes(system_prompt.encode()),

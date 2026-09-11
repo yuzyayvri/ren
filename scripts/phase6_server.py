@@ -16,6 +16,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from fastapi import UploadFile
+
 ROOT = Path(__file__).resolve().parents[1]
 import sys as _sys
 
@@ -45,6 +47,9 @@ def sha256_path(path: Path) -> str:
     return h.hexdigest()
 
 
+V1_SOURCE = "v1-import"
+
+
 def specimen_catalog(limit: int = 60) -> list[dict[str, Any]]:
     import itertools
 
@@ -54,6 +59,18 @@ def specimen_catalog(limit: int = 60) -> list[dict[str, Any]]:
         for image in sorted((txl / "images" / split).glob("*.png")):
             pools[0].append({"id": f"txl-{split}-{image.stem}", "kind": "blood-smear",
                              "source": "txl-pbc", "split": split, "name": image.name})
+    v1pool: list[dict[str, Any]] = []
+    v1dir = ROOT / "artifacts" / "v1_specimens"
+    if v1dir.is_dir():
+        for record in sorted(v1dir.glob("*/specimen.json")):
+            try:
+                meta = json.loads(record.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            v1pool.append({"id": meta["specimen_id"], "kind": "blood-smear",
+                           "source": V1_SOURCE, "split": "imported",
+                           "name": meta.get("source_filename", meta["specimen_id"])})
+    pools.insert(0, v1pool)
     aml = ROOT / "data" / "blood" / "aml" / "data" / "data"
     if aml.is_dir():
         for image in sorted(aml.glob("*/*.tiff")):
@@ -77,6 +94,13 @@ def specimen_catalog(limit: int = 60) -> list[dict[str, Any]]:
     return items
 
 
+def is_v1_specimen(specimen_id: str) -> bool:
+    import re
+
+    return bool(re.fullmatch(r"[0-9a-f]{12}", specimen_id)) and (
+        ROOT / "artifacts" / "v1_specimens" / specimen_id / "specimen.json").is_file()
+
+
 def resolve_specimen(specimen_id: str) -> Path:
     parts = specimen_id.split("-", 2)
     if parts[0] == "txl" and len(parts) == 3:
@@ -94,6 +118,10 @@ def resolve_specimen(specimen_id: str) -> Path:
 
 def render_image(specimen_id: str) -> tuple[bytes, str]:
     from PIL import Image
+
+    if is_v1_specimen(specimen_id):
+        path = ROOT / "artifacts" / "v1_specimens" / specimen_id / "normalized.png"
+        return path.read_bytes(), f"{specimen_id}.png"
 
     if specimen_id.startswith("pannuke-f3-"):
         import numpy as np
@@ -247,6 +275,24 @@ def create_app() -> Any:
     @app.get("/api/specimens/{specimen_id}/overlays")
     def overlays(specimen_id: str, source: str = "labels") -> Any:
         try:
+            if is_v1_specimen(specimen_id):
+                from scripts import v1_findings as findings
+
+                directory = ROOT / "artifacts" / "v1_specimens" / specimen_id
+                if not (directory / "vision.json").is_file():
+                    raise HTTPException(status_code=409, detail="specimen not analyzed yet")
+                live = findings.effective_findings(directory)
+                boxes = [{
+                    "label": f["label"], "code": f["label"],
+                    "bbox": [round(v) for v in f["region"]["box_xyxy"]],
+                    "confidence": f.get("confidence"),
+                    "finding_id": f["finding_id"],
+                    "origin": "machine" if f["review_state"] == "unreviewed" else "human-" + f["review_state"],
+                } for f in live]
+                counts: dict[str, int] = {}
+                for box in boxes:
+                    counts[box["label"]] = counts.get(box["label"], 0) + 1
+                return {"boxes": boxes, "counts": counts}
             if specimen_id.startswith("pannuke-f3-"):
                 index = int(specimen_id.rsplit("-", 1)[1])
                 result = pannuke_overlay(index)
@@ -393,6 +439,200 @@ def create_app() -> Any:
                 return {"id": job_id, "state": job["state"]}
             job["state"] = "cancelled"
             return {"id": job_id, "state": "cancelled"}
+
+    def _start_job(fn: Any, *args: Any) -> str:
+        job_id = uuid.uuid4().hex[:12]
+        with lock:
+            jobs[job_id] = {"id": job_id, "state": "queued", "progress": 0.0}
+        worker = threading.Thread(target=fn, args=(job_id, *args), daemon=True)
+        with lock:
+            jobs[job_id]["state"] = "running"
+        worker.start()
+        return job_id
+
+    def _v1_dir(specimen_id: str) -> Path:
+        if not is_v1_specimen(specimen_id):
+            raise HTTPException(status_code=404, detail="unknown v1 specimen")
+        return ROOT / "artifacts" / "v1_specimens" / specimen_id
+
+    @app.post("/api/specimens/import")
+    async def specimen_import(file: UploadFile) -> Any:
+        import shutil
+        import tempfile
+
+        from scripts import v1_ingest as ingest
+
+        suffix = Path(file.filename or "upload").suffix.lower()
+        if suffix not in (".png", ".jpg", ".jpeg"):
+            raise HTTPException(status_code=422, detail="only PNG/JPEG stills")
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmppath = Path(tmp.name)
+        try:
+            record = ingest.ingest_file(tmppath)
+        except ingest.IngestError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        finally:
+            tmppath.unlink(missing_ok=True)
+        return record
+
+    @app.post("/api/v1/analyze/{specimen_id}")
+    def v1_analyze(specimen_id: str) -> Any:
+        _v1_dir(specimen_id)
+
+        def worker(job_id: str) -> None:
+            from scripts import v1_vision as vision
+
+            try:
+                with lock:
+                    jobs[job_id]["progress"] = 0.3
+                result = vision.analyze_specimen(specimen_id)
+                with lock:
+                    jobs[job_id].update({"state": "done", "progress": 1.0,
+                                         "result": {"findings": len(result["findings"]),
+                                                    "detections": result["detections"]}})
+            except (OSError, ValueError, RuntimeError, ImportError) as exc:
+                with lock:
+                    jobs[job_id].update({"state": "failed",
+                                         "error": f"{type(exc).__name__}: {exc}"})
+
+        return {"job_id": _start_job(worker)}
+
+    @app.get("/api/v1/findings/{specimen_id}")
+    def v1_findings(specimen_id: str) -> Any:
+        from scripts import v1_findings as findings
+
+        directory = _v1_dir(specimen_id)
+        if not (directory / "vision.json").is_file():
+            raise HTTPException(status_code=409, detail="specimen not analyzed yet")
+        return {"findings": findings.effective_findings(directory)}
+
+    @app.post("/api/v1/reviews")
+    def v1_reviews(body: dict[str, Any]) -> Any:
+        from scripts import v1_findings as findings
+
+        try:
+            directory = _v1_dir(body["specimen_id"])
+            record = findings.record_review(
+                directory, body["finding_id"], body["action"],
+                changes=body.get("changes"),
+                reviewer=body.get("reviewer", "local"),
+                reason=body.get("reason"))
+        except (KeyError, TypeError, findings.FindingError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        return record
+
+    @app.post("/api/v1/retrieve/{specimen_id}")
+    def v1_retrieve(specimen_id: str) -> Any:
+        from scripts import v1_findings as findings
+        from scripts import v1_retrieve as retrieval
+
+        directory = _v1_dir(specimen_id)
+        try:
+            confirmed = findings.confirmed_findings(directory)
+            if not confirmed:
+                raise HTTPException(status_code=409, detail="no confirmed findings")
+            sets = retrieval.retrieve_for_findings(confirmed)
+            retrieval.save_evidence(directory, sets)
+        except retrieval.RetrievalError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return {"sets": list(sets),
+                "evidence": sum(len(group["evidence"]) for group in sets.values())}
+
+    @app.post("/api/v1/evidence")
+    def v1_evidence(body: dict[str, Any]) -> Any:
+        from scripts import v1_retrieve as retrieval
+
+        try:
+            directory = _v1_dir(body["specimen_id"])
+            if body.get("op") == "exclude":
+                retrieval.exclude_evidence(directory, body["finding_id"], body["evidence_id"],
+                                           reviewer=body.get("reviewer", "local"))
+                return {"excluded": body["evidence_id"]}
+            if body.get("op") == "add":
+                return retrieval.add_manual_evidence(directory, body["finding_id"], body["go_id"],
+                                                     reviewer=body.get("reviewer", "local"))
+        except (KeyError, TypeError, retrieval.RetrievalError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail="unknown evidence op")
+
+    @app.post("/api/v1/synthesize/{specimen_id}")
+    def v1_synthesize(specimen_id: str) -> Any:
+        from scripts import v1_findings as findings
+        from scripts import v1_retrieve as retrieval
+        from scripts.phase5_packet import build_packet
+
+        directory = _v1_dir(specimen_id)
+        if not (directory / "vision.json").is_file():
+            raise HTTPException(status_code=409, detail="specimen not analyzed yet")
+        confirmed = findings.confirmed_findings(directory)
+        if not confirmed:
+            raise HTTPException(status_code=409, detail="no confirmed findings")
+        try:
+            packet = build_packet(
+                f"v1-{specimen_id}", "phase3-txl",
+                findings.to_packet_findings(confirmed),
+                retrieval.to_packet_context(directory),
+                ["image-level-only", "no-patient-linkage"])
+        except (ValueError, OSError, retrieval.RetrievalError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+
+        def worker(job_id: str) -> None:
+            from scripts.phase5_synthesize import (
+                SynthesisProductionError,
+                synthesize_packet,
+            )
+
+            try:
+                with lock:
+                    jobs[job_id]["progress"] = 0.3
+                result = synthesize_packet(packet, "http://127.0.0.1:8080")
+                if result["status"] == "ok":
+                    (directory / "synthesis.json").write_text(
+                        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                with lock:
+                    jobs[job_id].update({"state": "done" if result["status"] == "ok" else "failed",
+                                         "progress": 1.0, "result": result,
+                                         "error": result.get("failure")})
+            except (SynthesisProductionError, OSError, ValueError, RuntimeError, ImportError) as exc:
+                with lock:
+                    jobs[job_id].update({"state": "failed",
+                                         "error": f"{type(exc).__name__}: {exc}"})
+
+        return {"job_id": _start_job(worker)}
+
+    @app.post("/api/v1/signoff/{specimen_id}")
+    def v1_signoff(specimen_id: str, body: dict[str, Any]) -> Any:
+        from scripts.phase5_packet import packet_digest
+
+        directory = _v1_dir(specimen_id)
+        synthesis_path = directory / "synthesis.json"
+        if not synthesis_path.is_file():
+            raise HTTPException(status_code=409, detail="nothing synthesized to sign")
+        synthesis = json.loads(synthesis_path.read_text(encoding="utf-8"))
+        if synthesis.get("status") != "ok" or "validated" not in synthesis:
+            raise HTTPException(status_code=409, detail="no valid synthesis to sign")
+        record = {"schema": "v1-signoff-v1", "specimen_id": specimen_id,
+                  "packet_sha256": packet_digest(synthesis["packet"]),
+                  "note_sha256": sha256_bytes(synthesis["note"].encode()),
+                  "reviewer": body.get("reviewer", "local"),
+                  "note": body.get("note"), "unix_time": time.time()}
+        (directory / "signoff.json").write_text(
+            json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return record
+
+    @app.get("/api/v1/export/{specimen_id}")
+    def v1_export(specimen_id: str) -> Any:
+        directory = _v1_dir(specimen_id)
+        bundle: dict[str, Any] = {"schema": "v1-export-v1", "specimen_id": specimen_id}
+        for name in ("specimen.json", "vision.json", "evidence.json", "synthesis.json", "signoff.json"):
+            path = directory / name
+            if path.is_file():
+                bundle[name.removesuffix(".json")] = json.loads(path.read_text(encoding="utf-8"))
+        bundle["reviews"] = [json.loads(line) for line in
+                             (directory / "reviews.jsonl").read_text(encoding="utf-8").splitlines()
+                             if line.strip()] if (directory / "reviews.jsonl").is_file() else []
+        return JSONResponse(bundle)
 
     @app.post("/api/reviews")
     def reviews(body: dict[str, Any]) -> dict[str, Any]:

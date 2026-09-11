@@ -34,6 +34,11 @@ def test_live_txl_val_image():
     import json
     from pathlib import Path
 
+    try:
+        import cv2  # noqa: F401
+    except ImportError:
+        pytest.skip("vision stack needs GL/X11 libs; run under scripts/vision_python.sh")
+
     from scripts import v1_ingest as ingest
 
     record = ingest.ingest_file(
