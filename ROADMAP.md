@@ -449,6 +449,13 @@ The final verifier passed twice with identical output; v3 and first-recovery
 inventories are unchanged. Phase 4 is accepted on the combined sealed v3
 quality evidence and final latency-only gate.
 
+Snapshot reconciliation (2026-09-11, issue #2): the v3 freeze records
+predate the two authorized query-layer changes, so the default snapshot
+gate raises; the tree provably matches the v2-recorded final
+implementation with all other files and data intact. Ratified with zero
+sealed mutation via `recovery/reconciliation_v1/` plus a bound loader and
+regression tests; consumers must use the bound loader.
+
 Deferred closeout verification also passed: the canonical Phase 2 fold3
 verifier reports 2,722/2,722 shards and digest
 `501b5e04f0a0bc5654215e9a6b9491f34007e7b1601c7089f78c16eae37dd01c`, the

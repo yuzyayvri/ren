@@ -814,3 +814,19 @@ Closeout verification: canonical Phase 2 fold3 verification passed at
 Phase 3 cross-artifact verifier passed, scoped Ruff passed, and the full test
 suite passed 126 tests (71 + 31 + 24 sequential chunks). No scientific
 evaluation was rerun after the final recovery boundary.
+
+## Phase 4 snapshot reconciliation (2026-09-11)
+
+The v3 freeze records predated two authorized `query.py` changes, so the
+default snapshot gate raised while every data hash matched (issue #2).
+Proven chain: v3 freeze `2900b86b` -> v1 tail membership `900f445d` ->
+v2 postings cache `cce08d21`; the tree matches the v2-recorded final
+exactly and the other nine code files match the v2 pre-change record.
+Reverting is impossible (no pre-change copy survives) and re-freezing is
+forbidden by the v2 authorization. Resolved without mutating any sealed
+file or code: new `recovery/reconciliation_v1/` boundary plus
+`scripts/phase4_snapshot_reconciliation.py` (intended-state proof and the
+sanctioned bound-load path) with regression tests, including bound
+symbolic output byte-identical to the sealed v3 ranking. Consumers must
+use the bound loader; the plain default path still raises by design.
+
