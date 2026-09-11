@@ -12,9 +12,14 @@ import argparse
 import hashlib
 import json
 import pickle
+import sys
 import time
 from pathlib import Path
 from typing import Any
+
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 ROOT = Path(__file__).resolve().parents[1]
 YOLO_CHECKPOINT = ROOT / "runs/detect/artifacts/phase3_detector_v2/yolo11n_from_scratch/weights/best.pt"

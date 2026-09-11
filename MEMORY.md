@@ -861,3 +861,18 @@ none crossed the rejection bar). Lifecycle event part3_accepted;
 report in artifacts/phase5_final_v1/. Phase 5 complete; dashboard
 remains Phase 6 work.
 
+## Ren v1.0.0 refinement (2026-09-11)
+
+Shipped on branch yuzy/v1-refinement: M1 PNG/JPEG ingestion + registry
+(TXL files are JPEG despite .png names, accepted deliberately); M2
+production vision (YOLO best.pt@2a98dc5a, Path Foundation, logistic head;
+16 findings match GT composition on val probe; ~10 s cold per smear via
+scripts/vision_python.sh, which supplies GL/X11 libs the full-opencv build
+needs); M3 finding contract + correction lifecycle; M4 deterministic
+taxonomy-to-query wiring with origin tracking; M5 dashboard primary
+workflow; M6 acceptance green on 2 unseen smears plus 5 failure paths.
+Production packets cap auto evidence at top-3 per finding (manual adds
+exempt) against the frozen 8192-token context; decoding n_predict raised
+1024->2048 as protocol v3. Open follow-up: proper opencv-headless
+packaging instead of the vision_python.sh lib shim.
+

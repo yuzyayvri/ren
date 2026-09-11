@@ -9,9 +9,14 @@ can never be confused with human-supplied semantics.
 from __future__ import annotations
 
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any
+
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -22,6 +27,7 @@ QUERY_MAP = {
     "Platelets": "platelet thrombocyte",
 }
 TOP_K = 5
+PACKET_PER_FINDING = 3
 
 
 class RetrievalError(ValueError):
@@ -145,11 +151,26 @@ def selected_evidence(specimen_dir: Path) -> list[dict[str, Any]]:
     return renumbered
 
 
-def to_packet_context(specimen_dir: Path) -> list[dict[str, Any]]:
+def to_packet_context(specimen_dir: Path, per_finding: int = PACKET_PER_FINDING) -> list[dict[str, Any]]:
+    """Select packet evidence: top-ranked entries per finding.
+
+    Retrieval keeps the full top-5 sets in evidence.json. The production
+    packet carries only the top entries per finding so real specimens fit
+    the frozen context window; the cap is deterministic and recorded.
+    """
     from scripts.phase5_packet import GO_RE
 
+    if not (specimen_dir / "evidence.json").is_file():
+        raise RetrievalError("no retrieved evidence; run retrieval first")
     context = []
+    kept: dict[str, int] = {}
     for entry in selected_evidence(specimen_dir):
+        # Reviewer-added evidence is never silently dropped by the cap.
+        if not str(entry.get("origin", "")).startswith("human:"):
+            key = entry.get("finding_id", "")
+            kept[key] = kept.get(key, 0) + 1
+            if kept[key] > per_finding:
+                continue
         if not GO_RE.fullmatch(entry["go_id"]):
             raise RetrievalError(f"bad GO identifier in evidence: {entry['go_id']!r}")
         for key in ("name", "definition"):

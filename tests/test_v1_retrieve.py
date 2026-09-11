@@ -1,4 +1,3 @@
-import json
 
 import pytest
 
@@ -67,3 +66,27 @@ def test_selection_origins_and_exclusion(tmp_path):
         retrieve.add_manual_evidence(directory, "F1", "GO:bad", reviewer="r1")
     with pytest.raises(retrieve.RetrievalError):
         retrieve.exclude_evidence(directory, "F9", "E1")
+
+
+def test_packet_context_caps_per_finding(tmp_path):
+    from scripts import v1_retrieve as retrieve
+
+    directory = tmp_path / "spec"
+    directory.mkdir()
+    evidence = []
+    for rank in range(1, 7):
+        evidence.append({"evidence_id": f"E{rank}", "go_id": f"GO:{rank:07d}",
+                         "name": "n", "definition": "d", "rank": rank,
+                         "mode": "hybrid", "query": "q", "origin": "auto-r",
+                         "finding_id": "F1"})
+    sets = {"F1": {"query": "q", "rule": "r", "qualifier": "observed",
+                   "retrieved_unix": 1.0, "evidence": evidence,
+                   "excluded": [], "manual_adds": [
+                       {"evidence_id": "M1", "go_id": "GO:0006915", "name": "n",
+                        "definition": "d", "rank": 7, "mode": "hybrid", "query": "q",
+                        "origin": "human:r1", "finding_id": "F1"}]}}
+    retrieve.save_evidence(directory, sets)
+    context = retrieve.to_packet_context(directory)
+    kept = [e["go_id"] for e in context]
+    assert kept[:3] == ["GO:0000001", "GO:0000002", "GO:0000003"]
+    assert "GO:0006915" in kept and len(context) == 4

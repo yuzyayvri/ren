@@ -30,6 +30,16 @@ The project is organized as small, sequential stages with plain interfaces:
 The code follows a modular, UNIX-style design: scripts own individual stages,
 artifacts are passed on disk, and the LLM stage communicates over HTTP.
 
+## v1.0.0 product contract
+
+Ren v1 supports one modality: blood-smear stills (PNG/JPEG). Import validates
+and registers the specimen; production vision (bound YOLO detector, frozen
+Path Foundation embeddings, frozen logistic head) yields spatial WBC/RBC/
+Platelet findings; reviewer confirmation drives deterministic retrieval;
+frozen MedGemma synthesis drafts the note; review signs it. Everything runs
+locally with hash-pinned provenance. No WSI, no tissue inference, no clinical
+claims. Outputs are diagnostic-assist drafts requiring human sign-off.
+
 ## Current status
 
 Phases 1–6 are complete: vision scaffold with Path Foundation selected,

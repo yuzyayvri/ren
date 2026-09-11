@@ -1,4 +1,3 @@
-import io
 import json
 import shutil
 
@@ -47,7 +46,6 @@ def test_v1_overlays_need_analysis(client):
 
 
 def test_v1_review_lifecycle(client, monkeypatch):
-    from scripts import v1_findings as findings
 
     specimen_id = _import(client).json()["specimen_id"]
     directory = ROOT / "artifacts" / "v1_specimens" / specimen_id

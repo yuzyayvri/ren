@@ -11,9 +11,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any
+
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / "artifacts" / "v1_specimens"
