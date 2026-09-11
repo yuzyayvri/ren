@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ren workstation</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="topbar">
+  <span class="title">ren</span>
+  <button id="prev" title="Previous specimen (,)">&lt;</button>
+  <select id="specimens" title="Specimen"></select>
+  <button id="next" title="Next specimen (.)">&gt;</button>
+  <span id="specimen-label"></span>
+  <button id="overlay-toggle" title="Toggle overlays (o)">overlays: on</button>
+  <span style="flex:1"></span>
+  <span id="server-dot" class="dot bad" title="synthesis server"></span>
+  <span class="dim" id="server-label">synthesis: unknown</span>
+</div>
+<div id="main">
+  <div id="stage">
+    <canvas id="canvas"></canvas>
+    <canvas id="minimap" width="150" height="150"></canvas>
+  </div>
+  <div id="side">
+    <section id="sec-findings"><h2>findings</h2><div class="body" id="findings"></div></section>
+    <section id="sec-evidence"><h2>evidence</h2><div class="body">
+      <input type="text" id="query" placeholder="retrieve GO context (e.g. leukocyte)">
+      <button class="action" id="retrieve">retrieve</button>
+      <div id="evidence"></div>
+    </div></section>
+    <section id="sec-synthesis"><h2>synthesis</h2><div class="body">
+      <button class="action primary" id="synthesize">synthesize from findings + evidence</button>
+      <div id="job" class="dim"></div>
+      <div id="note" class="provisional"></div>
+    </div></section>
+    <section id="sec-review"><h2>review</h2><div class="body">
+      <button class="action" data-verdict="accept">accept</button>
+      <button class="action" data-verdict="edit">edit</button>
+      <button class="action" data-verdict="reject">reject</button>
+      <button class="action" id="signoff">sign off note</button>
+      <div id="review-out" class="dim"></div>
+    </div></section>
+    <section id="sec-prov" class="collapsed"><h2>provenance</h2><div class="body" id="provenance"></div></section>
+  </div>
+</div>
+<div id="statusbar"><span id="st-spec">—</span><span id="st-job">idle</span><span id="st-net">loopback only</span></div>
+<script src="app.js"></script>
+</body>
+</html>
