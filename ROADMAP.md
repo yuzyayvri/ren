@@ -329,6 +329,13 @@ first-class feature, not bolted on.
 - **Acceptance criteria**: a full sample (image in, reviewable output out)
   works without touching the network at any point in the request path.
 
+- **Status (2026-09-11)**: implemented and serving — specimen catalog with
+  sealed overlays, bound-loader retrieval, frozen-path synthesis with
+  backend-owned server lifecycle, and recorded review with sign-off, all
+  loopback-only with no build step. True pyramidal WSI remains out of reach
+  of current artifacts; arbitrary-specimen ingestion and automatic
+  finding-to-retrieval wiring are v1.0.0 direction, not current behavior.
+
 ## Phase 2 final-readiness hardening (2026-09-09)
 
 The validity filter was the sole intentionally refitted component; all other

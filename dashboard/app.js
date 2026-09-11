@@ -220,12 +220,14 @@ async function serverStatus() {
     const s = await api("/api/server/status");
     const on = !!s.running;
     $("server-dot").className = `dot ${on ? "ok" : "bad"}`;
-    $("server-label").textContent = `synthesis: ${on ? "up" : "down"}`;
+    $("server-label").textContent =
+      `synthesis: ${on ? (s.managed ? "up" : "up (external)") : "down"}`;
     $("server-label").title = "click to toggle synthesis server";
   } catch { $("server-dot").className = "dot bad"; $("server-label").textContent = "backend: down"; }
 }
 $("server-label").addEventListener("click", async () => {
   const s = await api("/api/server/status");
+  if (s.running && !s.managed) { serverStatus(); return; }
   await api(s.running ? "/api/server/stop" : "/api/server/start", {method: "POST"});
   serverStatus();
 });
