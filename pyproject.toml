@@ -1,0 +1,42 @@
+[project]
+name = "ren"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "goatools",
+    "httpx",
+    "huggingface-hub",
+    "lancedb",
+    "networkx",
+    "numpy",
+    "opencv-python-headless",
+    "openslide-python",
+    "pillow",
+    "pydantic",
+    "python-multipart",
+    "scikit-image",
+    "sentence-transformers",
+    "tensorflow-cpu>=2.21.0",
+    "timm",
+    "torch",
+    "torchvision",
+    "ultralytics",
+    "uvicorn[standard]",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel",
+    "pytest",
+    "ruff",
+]
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch" }
+torchvision = { index = "pytorch" }

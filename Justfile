@@ -1,0 +1,58 @@
+# ren dev pipeline — run `just --list` to see all recipes
+
+default:
+    just --list
+
+# --- sanity checks -----------------------------------------------------
+
+vulkan-check:
+    vulkaninfo --summary | head -30
+
+rocm-check:
+    rocminfo | grep -i gfx
+
+# --- models --------------------------------------------------------------
+
+# Cognitive-synthesis LLMs, GGUF, for llama.cpp/Vulkan
+models-llm:
+    mkdir -p models/llm
+    hf download aaditya/OpenBioLLM-Llama3-8B-GGUF --include "*Q5_K_M*" --local-dir models/llm
+    hf download MaziyarPanahi/BioMistral-7B-GGUF --include "*Q5_K_M*" --local-dir models/llm
+
+# Vision-engine backbones — Virchow is gated but approves fast; path-foundation
+# is gated only by a click-through terms-of-use (no institutional-email wall,
+# unlike MahmoodLab's UNI2-h/CONCH, which flat-out deny @gmail/@hotmail/@qq).
+models-vision:
+    mkdir -p models/vision
+    hf download paige-ai/Virchow --local-dir models/vision/virchow
+    hf download google/path-foundation --local-dir models/vision/path-foundation
+
+models-embed:
+    mkdir -p models/embed
+    hf download microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext --local-dir models/embed/pubmedbert
+
+# Future, unselected candidates; pinned and verified by the dedicated scripts.
+models-future-acquire:
+    /tmp/run_python.sh scripts/acquire_future_models.py all
+
+models-future-verify:
+    /tmp/run_python.sh scripts/verify_future_models.py --output artifacts/future_models_verification.json
+
+# --- data ------------------------------------------------------------------
+
+# No clean single-command pull for Munich AML — see SETUP.md for the manual
+# TCIA/NBIA steps. TXL-PBC (integrates PBC + Raabin-WBC, YOLO-labeled) is a
+# plain git clone, no account needed at all.
+data-blood:
+    mkdir -p data/blood
+    git clone --depth 1 https://github.com/lugan113/TXL-PBC_Dataset data/blood/txl-pbc
+    echo "Munich AML Morphology Dataset: manual TCIA/NBIA steps — see SETUP.md"
+
+data-tissue:
+    mkdir -p data/tissue
+    echo "PanNuke: https://warwick.ac.uk/fac/cross_fac/tia/data/pannuke — direct download, no auth"
+
+# --- serving -----------------------------------------------------------------
+
+serve-llm model="models/llm/openbiollm-llama3-8b.Q5_K_M.gguf":
+    llama-server -m {{model}} --host 127.0.0.1 --port 8080 -ngl 999

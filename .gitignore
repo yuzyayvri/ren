@@ -1,0 +1,53 @@
+# Local environments and Nix/direnv state
+.venv/
+.direnv/
+.env
+.env.*
+!.envrc
+
+# Python caches, test/lint output, and local tooling state
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# Experiment output, logs, and generated reports
+artifacts/
+runs/
+*.log
+*.out
+*.tmp
+*.bak
+
+# Derived embeddings and model/data products
+embeddings/
+data/
+models/
+*.npy
+*.npz
+*.pkl
+*.pickle
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.safetensors
+*.gguf
+*.msgpack
+*.zip
+*.tar
+*.tar.gz
+
+# Local/editor and machine-specific files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temporary launch helpers created outside the project are not committed.
