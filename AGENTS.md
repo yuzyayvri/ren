@@ -32,7 +32,8 @@ The Python environment is **hedgehog** (pinned): `uv.lock` locks exact versions;
 ```
 just vulkan-check       # confirm the RX 6600 shows up via RADV (Vulkan path)
 just rocm-check         # confirm ROCm sees gfx (ROCm path)
-just serve-llm [model]  # llama-server on 127.0.0.1:8080, default model=OpenBioLLM-8B GGUF
+just serve-llm [model]  # llama-server on 127.0.0.1:8080, default model=MedGemma 1.5 4B Q5_K_M GGUF
+just serve-dashboard [port]  # Phase 6 workstation on 127.0.0.1:8081, offline; needs serve-llm or the in-UI toggle for notes
 ```
 
 Model and data recipes (`just models-llm`, `just models-vision`, `just models-embed`, `just data-blood`, `just data-tissue`) are one-time pull steps — the files are already on disk for this project, so you shouldn't need to re-run them unless something got cleared.
@@ -80,9 +81,9 @@ convenience so a session doesn't re-derive them:
   default path raises by design — the v3 freeze records predate the two
   authorized query-layer changes (issue #2, reconciled without sealed
   mutation). Never "fix" this by editing sealed v3/v4 artifacts or code.
-- **Cognitive synthesis LLMs**: `OpenBioLLM-Llama3-8B` and `MedGemma 1.5 4B
-  Q5_K_M`, both GGUF and downloaded. Both are **candidates** to compare; pick a
-  winner once you have comparison numbers and drop the other. Don't ship both.
+- **Cognitive synthesis LLM**: `MedGemma 1.5 4B Q5_K_M` GGUF won the blinded
+  Part 2 comparison and is the frozen production winner; `serve-llm` serves it
+  by default. OpenBioLLM-Llama3-8B output is retained only as audit evidence, and
   BioMistral-7B is excluded from Phase 5 and the production/default serving path.
 - **Avoid MahmoodLab models** (UNI2-h, CONCH) — they hard-block personal email
   domains at the access-request stage.

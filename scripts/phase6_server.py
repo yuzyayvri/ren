@@ -281,11 +281,41 @@ def create_app() -> Any:
         except (RuntimeError, ValueError, ImportError) as exc:
             raise HTTPException(status_code=502, detail=f"retrieval failed: {exc}")
 
+    def _managed_proc(app: Any) -> Any:
+        proc = app.state.server_proc if hasattr(app.state, "server_proc") else None
+        return proc if proc is not None and proc.poll() is None else None
+
+
+    def _endpoint_health() -> dict[str, Any]:
+        import httpx
+
+        try:
+            with httpx.Client(timeout=2.0) as client:
+                response = client.get("http://127.0.0.1:8080/health")
+                if response.status_code != 200:
+                    return {"endpoint_healthy": False, "model_match": None}
+                try:
+                    props = client.get("http://127.0.0.1:8080/props", timeout=2.0).json()
+                    model_path = props.get("model_path", "")
+                except (ValueError, httpx.HTTPError):
+                    model_path = ""
+            from scripts.phase5_compare import frozen_models
+
+            winner = next(m["filename"] for m in frozen_models() if m["name"] == "medgemma-1.5-4b-it")
+            return {"endpoint_healthy": True,
+                    "model_match": model_path.endswith(winner) if model_path else None}
+        except httpx.HTTPError:
+            return {"endpoint_healthy": False, "model_match": None}
+
+
     @app.get("/api/server/status")
     def server_status() -> dict[str, Any]:
-        proc = app.state.server_proc if hasattr(app.state, "server_proc") else None
-        return {"running": proc is not None and proc.poll() is None,
-                "model": getattr(app.state, "server_model", None)}
+        proc = _managed_proc(app)
+        health = _endpoint_health()
+        return {"running": bool(health["endpoint_healthy"]),
+                "managed": proc is not None,
+                "model": getattr(app.state, "server_model", None),
+                **health}
 
     @app.post("/api/server/start")
     def server_start() -> dict[str, Any]:
@@ -294,9 +324,11 @@ def create_app() -> Any:
         from scripts.phase5_compare import wait_ready
         from scripts.phase5_synthesize import preflight_winner
 
-        proc = app.state.server_proc if hasattr(app.state, "server_proc") else None
-        if proc is not None and proc.poll() is None:
-            return {"running": True}
+        if _managed_proc(app) is not None:
+            return {"running": True, "managed": True}
+        if _endpoint_health()["endpoint_healthy"]:
+            return {"running": True, "managed": False,
+                    "note": "synthesis server already listening; not started here"}
         model = preflight_winner()
         from scripts.phase5_compare import DEFAULT_SERVER
 
@@ -318,12 +350,12 @@ def create_app() -> Any:
 
     @app.post("/api/server/stop")
     def server_stop() -> dict[str, Any]:
-        proc = app.state.server_proc if hasattr(app.state, "server_proc") else None
-        if proc is not None and proc.poll() is None:
+        proc = _managed_proc(app)
+        if proc is not None:
             proc.terminate()
-        app.state.server_proc = None
-        app.state.server_model = None
-        return {"running": False}
+            app.state.server_proc = None
+            app.state.server_model = None
+        return server_status()
 
     @app.post("/api/jobs/synthesize")
     def synthesize_job(body: dict[str, Any]) -> dict[str, Any]:

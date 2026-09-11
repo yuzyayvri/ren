@@ -9,31 +9,37 @@ off by a human, and the system makes no autonomous clinical calls.
 The project is organized as small, sequential stages with plain interfaces:
 
 1. **Vision engine** — frozen Google Path Foundation features are used for
-   tissue representation and small task-specific heads. PanNuke instance work
-   also includes a separate HoVer-Net-fast-style segmentation network; the
-   Path Foundation encoder remains frozen.
+   tissue representation and small task-specific heads. Path Foundation is a
+   feature extractor: it emits one embedding per crop and performs no
+   detection itself. PanNuke instance work also includes a separate
+   HoVer-Net-fast-style segmentation network whose frozen outputs supply
+   the visible nuclei, classes, and counts; the Path Foundation encoder
+   remains frozen.
 2. **Knowledge retrieval** — local files/arrays, LanceDB, SQLite, and
    NetworkX support vector and symbolic retrieval workflows.
 3. **Cognitive synthesis** — a local `llama-server` endpoint serves GGUF
    candidates over the OpenAI-compatible `/v1/chat/completions` API. Vulkan is
    the intended llama.cpp backend; ROCm is reserved for optional PyTorch CV
    acceleration.
-4. **Dashboard/UI** — planned as an offline request-path stage; the current
-   repository primarily contains the experiment and protocol tooling.
+4. **Dashboard/UI** — a local specimen-first workstation served loopback-only
+   with no build step or remote dependencies: specimen imagery with sealed
+   overlays, bound-loader retrieval, frozen-path synthesis, and explicit
+   human review with sign-off. True pyramidal WSI is out of reach of the
+   current artifacts and is not claimed.
 
 The code follows a modular, UNIX-style design: scripts own individual stages,
 artifacts are passed on disk, and the LLM stage communicates over HTTP.
 
 ## Current status
 
-The Nix flake, direnv workflow, uv environment, local models/data, and Vulkan
-llama-server path have been exercised on the development machine. Path
-Foundation and Virchow embedding extraction and verification are implemented.
-PanNuke Phase 2 remains in development: the current fold-2 candidates pass
-the geometry gates but the end-to-end macro-F1 acceptance gate is not yet met.
-TXL-PBC and Munich AML protocol/audit tooling is present, and Phase 4 local
-retrieval protocol tooling is included. Fold 3 remains locked for the pending
-Phase 2 decision.
+Phases 1–6 are complete: vision scaffold with Path Foundation selected,
+one-shot PanNuke fold-3 evaluation accepted, TXL-PBC and image-level Munich
+AML blood stages complete, frozen Phase 4 v3 retrieval with latency recovery
+accepted, MedGemma selected through blinded comparison and accepted on the
+untouched final set, and the local workstation serving specimens, sealed
+overlays, retrieval, synthesis, and review. Pending direction is a v1.0.0
+refinement (arbitrary-specimen ingestion, automatic finding-to-retrieval
+wiring); see ROADMAP.md for the plan when it lands.
 
 Detailed decisions, acceptance criteria, and operational notes are in
 [`ROADMAP.md`](ROADMAP.md), [`AGENTS.md`](AGENTS.md), [`MEMORY.md`](MEMORY.md),
@@ -51,8 +57,11 @@ how to obtain them.
 
 ## Repository layout
 
-- `scripts/` — extraction, training, evaluation, audit, retrieval, and serving
-  stage entry points
+- `scripts/` — extraction, training, evaluation, audit, retrieval, synthesis,
+  and workstation-serving stage entry points
+- `dashboard/` — dependency-free static workstation frontend (no build step)
+- `protocols/phase5_v1/`, `protocols/phase5_v2/` — frozen synthesis contracts
+  (v1 superseded, preserved as history)
 - `tests/` — focused regression and protocol tests
 - `docs/` — project review documentation
 - `flake.nix`, `flake.lock`, `pyproject.toml`, `uv.lock`, `Justfile` —

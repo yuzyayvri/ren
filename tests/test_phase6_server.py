@@ -203,3 +203,61 @@ def test_import_errors_report_diagnosed_not_bare(client, monkeypatch):
     monkeypatch.setattr(rec, "load_bound_query", boom)
     r = client.post("/api/retrieve", json={"query": "x", "mode": "symbolic"})
     assert r.status_code == 502 and "No module named" in r.json()["detail"]
+
+
+class _StubHandler(__import__("http.server", fromlist=["BaseHTTPRequestHandler"]).BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b'{"status":"ok"}' if self.path == "/health" else b"{}"
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *a):
+        pass
+
+
+@pytest.fixture()
+def stub_llama():
+    import threading
+    from http.server import HTTPServer
+
+    server = HTTPServer(("127.0.0.1", 8080), _StubHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield server
+    server.shutdown()
+
+
+def test_status_reports_unmanaged_server(stub_llama):
+    from fastapi.testclient import TestClient
+
+    body = TestClient(srv.create_app()).get("/api/server/status").json()
+    assert body["running"] is True and body["managed"] is False
+
+
+def test_status_down_without_server():
+    from fastapi.testclient import TestClient
+
+    body = TestClient(srv.create_app()).get("/api/server/status").json()
+    assert body["running"] is False
+
+
+def test_start_refuses_duplicate_server(stub_llama):
+    from fastapi.testclient import TestClient
+
+    body = TestClient(srv.create_app()).post("/api/server/start").json()
+    assert body["running"] is True and body["managed"] is False
+
+
+def test_stop_leaves_external_server_running(stub_llama):
+    from fastapi.testclient import TestClient
+
+    client = TestClient(srv.create_app())
+    assert client.post("/api/server/stop").json()["running"] is True
+
+
+def test_indicator_distinguishes_managed():
+    text = (ROOT / "dashboard" / "app.js").read_text()
+    assert "up (external)" in text
