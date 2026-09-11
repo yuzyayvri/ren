@@ -330,3 +330,42 @@ def test_v1_cancel_mid_synthesis_leaves_state(client, monkeypatch):
         assert not (directory / "synthesis.json").is_file()
     finally:
         shutil.rmtree(directory)
+
+
+def test_retrieve_returns_finding_mapped_sets(client):
+    specimen_id, directory = _v1_specimen_with_vision(client)
+    try:
+        client.post("/api/v1/reviews", json={
+            "specimen_id": specimen_id, "finding_id": "F1", "action": "confirm"})
+        (directory / "evidence.json").write_text(json.dumps({
+            "F1": {"query": "white blood cell leukocyte", "rule": "r",
+                   "qualifier": "observed", "retrieved_unix": 1.0,
+                   "evidence": [{"evidence_id": "E1", "go_id": "GO:0002443", "name": "n",
+                                 "definition": "d", "rank": 1, "mode": "hybrid",
+                                 "query": "white blood cell leukocyte",
+                                 "origin": "auto-r", "finding_id": "F1"}],
+                   "excluded": [], "manual_adds": []}}))
+        import scripts.phase4_snapshot_reconciliation as rec
+
+        class Engine:
+            def retrieve(self, query, mode="hybrid", k=5):
+                assert query == "white blood cell leukocyte"
+                return ["GO:0002443"]
+
+        import unittest.mock as mock
+
+        with mock.patch.object(rec, "load_bound_query", return_value=Engine()):
+            body = client.post(f"/api/v1/retrieve/{specimen_id}").json()
+        assert set(body["sets"]) == {"F1"}
+        group = body["sets"]["F1"]
+        assert group["query"] == "white blood cell leukocyte"
+        assert group["evidence"][0]["finding_id"] == "F1"
+        assert group["evidence"][0]["origin"].startswith("auto-")
+    finally:
+        shutil.rmtree(directory)
+
+
+def test_frontend_auto_chain_present():
+    text = (ROOT / "dashboard" / "app.js").read_text()
+    assert "autoRetrieveQuiet" in text
+    assert "manual query remains available" in text

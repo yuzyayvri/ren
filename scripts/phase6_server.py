@@ -564,7 +564,7 @@ def create_app() -> Any:
             retrieval.save_evidence(directory, sets)
         except retrieval.RetrievalError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
-        return {"sets": list(sets),
+        return {"sets": sets,
                 "evidence": sum(len(group["evidence"]) for group in sets.values())}
 
     @app.post("/api/v1/evidence")

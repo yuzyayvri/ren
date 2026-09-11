@@ -168,6 +168,7 @@ function bindReviewModeBar() {
     $("st-job").textContent = `auto-approved ${r.confirmed.length}`;
     await loadV1Findings();
     refreshV1Overlays();
+    autoRetrieveQuiet();
   });
 }
 async function loadV1Findings() {
@@ -193,6 +194,7 @@ async function loadV1Findings() {
         body: JSON.stringify({specimen_id: id, finding_id: b.dataset.fid, action: b.dataset.act, reviewer: "workstation"})});
       await loadV1Findings();
       refreshV1Overlays();
+      if (b.dataset.act === "confirm") autoRetrieveQuiet();
     }));
   } catch (e) {
     el.innerHTML += `<div><button class="action primary" id="analyze-btn">analyze specimen</button>
@@ -255,6 +257,15 @@ $("retrieve").addEventListener("click", async () => {
       `<div class="dim">mode ${r.mode}; rank order preserved</div>`;
   } catch (e) { $("evidence").innerHTML = `<span class="bad">retrieval failed: ${e.message}</span>`; }
 });
+async function autoRetrieveQuiet() {
+  try {
+    await v1RetrieveAll();
+    $("st-job").textContent = "evidence attached automatically";
+  } catch (e) {
+    const el = $("evidence");
+    if (el) el.innerHTML = `<span class="bad">automatic retrieval failed: ${e.message} — manual query remains available</span>`;
+  }
+}
 async function v1RetrieveAll() {
   const id = S.specimens[S.index].id;
   const r = await api(`/api/v1/retrieve/${id}`, {method: "POST"});
