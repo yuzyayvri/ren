@@ -261,3 +261,11 @@ def test_stop_leaves_external_server_running(stub_llama):
 def test_indicator_distinguishes_managed():
     text = (ROOT / "dashboard" / "app.js").read_text()
     assert "up (external)" in text
+
+
+def test_review_rerender_preserves_ui_state():
+    text = (ROOT / "dashboard" / "app.js").read_text()
+    assert "side.scrollTop" in text
+    assert "refreshV1Overlays" in text
+    handler = text.split("button[data-act]")[1].split("}));")[0]
+    assert "loadIndex(S.index)" not in handler

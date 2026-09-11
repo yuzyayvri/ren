@@ -140,9 +140,19 @@ function renderFindings(counts) {
   el.dataset.counts = JSON.stringify(counts);
   if (S.isV1) loadV1Findings();
 }
+async function refreshV1Overlays() {
+  const id = S.specimens[S.index].id;
+  try {
+    const ov = await api(`/api/specimens/${id}/overlays`);
+    S.boxes = ov.boxes || [];
+    draw();
+  } catch { /* overlay refresh is best-effort; list state is authoritative */ }
+}
 async function loadV1Findings() {
   const id = S.specimens[S.index].id;
   const el = $("findings");
+  const side = $("side");
+  const scrollTop = side ? side.scrollTop : 0;
   try {
     const r = await api(`/api/v1/findings/${id}`);
     el.innerHTML = r.findings.map((f) =>
@@ -152,10 +162,12 @@ async function loadV1Findings() {
         <button class="action" data-act="confirm" data-fid="${f.finding_id}">confirm</button>
         <button class="action" data-act="reject" data-fid="${f.finding_id}">reject</button>
       </div>`).join("") || `<span class="dim">no findings</span>`;
+    if (side) side.scrollTop = scrollTop;
     el.querySelectorAll("button[data-act]").forEach((b) => b.addEventListener("click", async () => {
       await api(`/api/v1/reviews`, {method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({specimen_id: id, finding_id: b.dataset.fid, action: b.dataset.act, reviewer: "workstation"})});
-      loadV1Findings(); loadIndex(S.index);
+      await loadV1Findings();
+      refreshV1Overlays();
     }));
   } catch (e) {
     el.innerHTML += `<div><button class="action primary" id="analyze-btn">analyze specimen</button>
