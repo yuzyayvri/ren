@@ -17,13 +17,20 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+import sys as _sys
+
+if str(ROOT) not in _sys.path:
+    _sys.path.insert(0, str(ROOT))
 CACHE = ROOT / "artifacts" / "phase6_cache"
 REVIEWS = ROOT / "artifacts" / "phase6_reviews"
 DASHBOARD = ROOT / "dashboard"
 
 PANNUKE_CLASSES = ("background", "neoplastic", "inflammatory", "connective",
                    "dead", "epithelial")
+PANNUKE_FOLD = "fold3"
+PANNUKE_IMAGES = (ROOT / "data" / "tissue" / "fold3" / "Fold 3" / "images" / "fold3" / "images.npy")
 TXL_SPLITS = ("train", "val", "test")
+TXL_CODES = ("WBC", "RBC", "Platelets")
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -39,19 +46,34 @@ def sha256_path(path: Path) -> str:
 
 
 def specimen_catalog(limit: int = 60) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
+    import itertools
+
     txl = ROOT / "data" / "blood" / "txl-pbc" / "TXL-PBC"
+    pools: list[list[dict[str, Any]]] = [[], [], []]
     for split in TXL_SPLITS:
-        for image in sorted((txl / "images" / split).glob("*.png"))[: max(0, limit)]:
-            items.append({"id": f"txl-{split}-{image.stem}", "kind": "blood-smear",
-                          "source": "txl-pbc", "split": split, "name": image.name})
-            if len(items) >= limit:
-                return items
+        for image in sorted((txl / "images" / split).glob("*.png")):
+            pools[0].append({"id": f"txl-{split}-{image.stem}", "kind": "blood-smear",
+                             "source": "txl-pbc", "split": split, "name": image.name})
     aml = ROOT / "data" / "blood" / "aml" / "data" / "data"
     if aml.is_dir():
-        for image in sorted(aml.glob("*/*.tiff"))[: max(0, limit - len(items))]:
-            items.append({"id": f"aml-{image.parent.name}-{image.stem}", "kind": "blood-cell",
-                          "source": "aml", "split": image.parent.name, "name": image.name})
+        for image in sorted(aml.glob("*/*.tiff")):
+            pools[1].append({"id": f"aml-{image.parent.name}-{image.stem}", "kind": "blood-cell",
+                             "source": "aml", "split": image.parent.name, "name": image.name})
+    if PANNUKE_IMAGES.is_file():
+        import numpy as _np
+
+        count = int(_np.load(str(PANNUKE_IMAGES), mmap_mode="r").shape[0])
+        for index in range(count):
+            pools[2].append({"id": f"pannuke-f3-{index}", "kind": "tissue-patch",
+                             "source": "pannuke", "split": PANNUKE_FOLD,
+                             "name": f"fold3 patch {index}"})
+    items: list[dict[str, Any]] = []
+    for round_robin in itertools.zip_longest(*pools):
+        for entry in round_robin:
+            if entry is not None:
+                items.append(entry)
+            if len(items) >= limit:
+                return items
     return items
 
 
@@ -77,7 +99,7 @@ def render_image(specimen_id: str) -> tuple[bytes, str]:
         import numpy as np
 
         index = int(specimen_id.rsplit("-", 1)[1])
-        arr = np.load(ROOT / "data" / "tissue" / "fold3" / "images.npy", mmap_mode="r")
+        arr = np.load(PANNUKE_IMAGES, mmap_mode="r")
         if not 0 <= index < arr.shape[0]:
             raise KeyError(specimen_id)
         frame = np.asarray(arr[index]).astype("uint8")
@@ -151,6 +173,7 @@ def txl_boxes(specimen_id: str, source: str = "labels") -> dict[str, Any]:
             cls, cx, cy, w, h = int(cls), float(cx), float(cy), float(w), float(h)
             boxes.append({
                 "label": names[cls] if cls < len(names) else str(cls),
+                "code": TXL_CODES[cls] if cls < len(TXL_CODES) else str(cls),
                 "bbox": [round((cx - w / 2) * width), round((cy - h / 2) * height),
                          round((cx + w / 2) * width), round((cy + h / 2) * height)],
                 "confidence": None,
@@ -255,7 +278,7 @@ def create_app() -> Any:
             engine = load_bound_query()
             return {"query": query, "mode": mode,
                     "entries": describe_terms(engine.retrieve(query, mode=mode), query, mode)}
-        except (RuntimeError, ValueError) as exc:
+        except (RuntimeError, ValueError, ImportError) as exc:
             raise HTTPException(status_code=502, detail=f"retrieval failed: {exc}")
 
     @app.get("/api/server/status")
@@ -389,7 +412,7 @@ def _run_synthesis_job(app: Any, jobs: dict[str, Any], lock: threading.Lock,
             jobs[job_id].update({"state": "done" if result["status"] == "ok" else "failed",
                                  "progress": 1.0, "result": result,
                                  "error": result.get("failure")})
-    except (SynthesisProductionError, OSError, ValueError, RuntimeError) as exc:
+    except (SynthesisProductionError, OSError, ValueError, RuntimeError, ImportError) as exc:
         with lock:
             jobs[job_id].update({"state": "failed", "error": f"{type(exc).__name__}: {exc}"})
 

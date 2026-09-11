@@ -141,3 +141,65 @@ def test_offline_audit():
                         assert "127.0.0.1" in line, (path.name, line[:100])
         seen = True
     assert seen
+
+
+def test_script_bootstrap_present():
+    text = (ROOT / "scripts" / "phase6_server.py").read_text()
+    assert "if str(ROOT) not in _sys.path:" in text
+
+
+def test_control_bindings_present():
+    text = (ROOT / "dashboard" / "app.js").read_text()
+    assert '$("overlay-toggle").addEventListener("click", toggleOverlay)' in text
+    assert '$("prev").addEventListener("click"' in text
+    assert '$("next").addEventListener("click"' in text
+    assert "pannuke-f3-${i}" not in text
+
+
+def test_catalog_serves_pannuke():
+    from fastapi.testclient import TestClient
+
+    client = TestClient(srv.create_app())
+    ids = [s["id"] for s in client.get("/api/specimens?limit=500").json()]
+    assert any(i.startswith("pannuke-f3-") for i in ids)
+    assert "pannuke-f3-0" in ids
+    assert any(i.startswith("txl-") for i in ids)
+
+
+def test_pannuke_image_loads():
+    from fastapi.testclient import TestClient
+
+    client = TestClient(srv.create_app())
+    r = client.get("/api/specimens/pannuke-f3-0/image")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png"
+    assert len(r.content) > 10000
+
+
+def test_box_codes_validate_as_packet():
+    from fastapi.testclient import TestClient
+
+    from scripts.phase5_packet import build_packet
+
+    client = TestClient(srv.create_app())
+    body = client.get("/api/specimens/txl-val-10c5112dfae4533cb9fa8f6f73a49274/overlays").json()
+    assert body["boxes"] and all(b["code"] in ("WBC", "RBC", "Platelets") for b in body["boxes"])
+    counts: dict[str, int] = {}
+    for box in body["boxes"]:
+        counts[box["code"]] = counts.get(box["code"], 0) + 1
+    packet = build_packet(
+        "ui-t1", "phase3-txl",
+        [{"finding_id": f"F{i + 1}", "label": label, "count": n, "qualifier": "observed"}
+         for i, (label, n) in enumerate(counts.items())],
+        [], [])
+    assert packet["findings"]
+
+
+def test_import_errors_report_diagnosed_not_bare(client, monkeypatch):
+    import scripts.phase4_snapshot_reconciliation as rec
+
+    def boom():
+        raise ModuleNotFoundError("No module named 'scripts'")
+
+    monkeypatch.setattr(rec, "load_bound_query", boom)
+    r = client.post("/api/retrieve", json={"query": "x", "mode": "symbolic"})
+    assert r.status_code == 502 and "No module named" in r.json()["detail"]
