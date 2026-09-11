@@ -49,8 +49,9 @@ out to be wrong rather than silently working around it.
   trainable HoVer-Net-fast-style segmentation network. This does not permit
   fine-tuning or replacing frozen Path Foundation; it is a distinct stage with
   its own artifacts and evaluation gate.
-- **Cognitive synthesis LLMs**: `OpenBioLLM-Llama3-8B` and `BioMistral-7B`,
-  GGUF, served via `llama-server`.
+- **Cognitive synthesis LLMs**: `OpenBioLLM-Llama3-8B` and `MedGemma 1.5 4B
+  Q5_K_M`, GGUF, served via `llama-server`; BioMistral-7B is excluded from
+  Phase 5 and the production/default serving path.
 - **Architecture philosophy**: modular, UNIX-style — small pieces
   communicating over plain interfaces (HTTP for the LLM, files/arrays between
   vision and retrieval stages), not one monolithic model or codebase.
@@ -72,15 +73,14 @@ out to be wrong rather than silently working around it.
     (sidesteps the Aspera wall entirely). `abbreviations.txt` +
     `annotations.dat`/`annotations_augmented.dat` + `data/` (images). Ready
     to use — Phase 3's blast-vs-non-blast task is no longer blocked.
-- Models: OpenBioLLM-8B and BioMistral-7B (GGUF) are downloaded. Virchow is
-  confirmed loadable and its implementation has been audited against the local
-  checkpoint. Path Foundation is load-tested locally under TensorFlow 2.21 and
-  produces the documented 384-dimensional float32 embeddings. PubMedBERT is on
-  disk but not yet load-tested; verify before relying on it.
-  Future MedCPT query/article encoders and MedGemma 1.5 4B Q5_K_M are also
-  pinned and load-tested as unselected candidates. They remain for later
-  retrieval/synthesis comparison; no Phase 3/4 benchmark or winner decision
-  was started.
+- Models: OpenBioLLM-8B and MedGemma 1.5 4B Q5_K_M (GGUF) are downloaded.
+  Virchow is confirmed loadable and its implementation has been audited against
+  the local checkpoint. Path Foundation is load-tested locally under TensorFlow
+  2.21 and produces the documented 384-dimensional float32 embeddings.
+  PubMedBERT is on disk but not yet load-tested; verify before relying on it.
+  Future MedCPT query/article encoders are also pinned and load-tested as
+  unselected retrieval candidates. No Phase 3/4 benchmark or Phase 5 winner
+  decision was started.
 - Phase 1 progress: Virchow embeddings were re-extracted through the validated
   index/provenance pipeline for all folds (fold1 2656, fold2 2523, fold3 2722;
   CLS-only, 1280-dimensional). `scripts/verify_embeddings.py` exits zero with

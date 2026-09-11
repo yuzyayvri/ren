@@ -17,7 +17,7 @@ rocm-check:
 models-llm:
     mkdir -p models/llm
     hf download aaditya/OpenBioLLM-Llama3-8B-GGUF --include "*Q5_K_M*" --local-dir models/llm
-    hf download MaziyarPanahi/BioMistral-7B-GGUF --include "*Q5_K_M*" --local-dir models/llm
+    hf download unsloth/medgemma-1.5-4b-it-GGUF --include "*Q5_K_M*" --local-dir models/llm
 
 # Vision-engine backbones — Virchow is gated but approves fast; path-foundation
 # is gated only by a click-through terms-of-use (no institutional-email wall,
@@ -31,7 +31,8 @@ models-embed:
     mkdir -p models/embed
     hf download microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext --local-dir models/embed/pubmedbert
 
-# Future, unselected candidates; pinned and verified by the dedicated scripts.
+# Pinned MedCPT retrieval artifacts plus the MedGemma Phase 5 candidate; verified
+# by the dedicated scripts.
 models-future-acquire:
     /tmp/run_python.sh scripts/acquire_future_models.py all
 
