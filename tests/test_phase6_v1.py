@@ -179,3 +179,44 @@ def test_evidence_ops_without_retrieval_are_422(client):
             "finding_id": "F1", "go_id": "GO:0006915"}).status_code == 422
     finally:
         shutil.rmtree(ROOT / "artifacts" / "v1_specimens" / specimen_id)
+
+
+def test_bulk_approve_confirms_only_unreviewed(client):
+    specimen_id = _import(client).json()["specimen_id"]
+    directory = ROOT / "artifacts" / "v1_specimens" / specimen_id
+    try:
+        fake_vision = {"specimen_sha256": "x", "models": {},
+                       "findings": [
+                           {"finding_id": "F1", "label": "WBC", "confidence": 0.9,
+                            "region": {"box_xyxy": [1, 1, 5, 5]}, "source": "machine",
+                            "specimen_id": specimen_id},
+                           {"finding_id": "F2", "label": "RBC", "confidence": 0.8,
+                            "region": {"box_xyxy": [5, 6, 7, 8]}, "source": "machine",
+                            "specimen_id": specimen_id}]}
+        (directory / "vision.json").write_text(json.dumps(fake_vision))
+        client.post("/api/v1/reviews", json={
+            "specimen_id": specimen_id, "finding_id": "F2", "action": "reject"})
+        body = client.post("/api/v1/reviews/bulk", json={
+            "specimen_id": specimen_id, "action": "confirm"}).json()
+        assert body["confirmed"] == ["F1"]
+        from scripts import v1_findings as findings
+
+        states = {f["finding_id"]: f["review_state"]
+                  for f in findings.effective_findings(directory)}
+        assert states == {"F1": "confirmed"}
+        decisions = {r["finding_id"]: r["action"] for r in findings.read_reviews(directory)}
+        assert decisions["F2"] == "reject"
+        reasons = [r["reason"] for r in findings.read_reviews(directory) if r["finding_id"] == "F1"]
+        assert reasons == ["bulk auto-approval"]
+        assert client.post("/api/v1/reviews/bulk", json={
+            "specimen_id": specimen_id, "action": "reject"}).status_code == 422
+        assert client.post("/api/v1/reviews/bulk", json={
+            "specimen_id": "000000000000", "action": "confirm"}).status_code == 404
+    finally:
+        shutil.rmtree(directory)
+
+
+def test_review_mode_toggle_present():
+    text = (ROOT / "dashboard" / "app.js").read_text()
+    assert "Manual Approve" in text and "Approve For Me" in text
+    assert "approve-all" in text and "reviewMode" in text

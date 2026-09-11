@@ -522,6 +522,28 @@ def create_app() -> Any:
             raise HTTPException(status_code=422, detail=str(exc))
         return record
 
+    @app.post("/api/v1/reviews/bulk")
+    def v1_reviews_bulk(body: dict[str, Any]) -> Any:
+        from scripts import v1_findings as findings
+
+        try:
+            directory = _v1_dir(body["specimen_id"])
+            action = body.get("action", "confirm")
+            if action != "confirm":
+                raise findings.FindingError("bulk action supports confirm only")
+            reviewer = body.get("reviewer", "local")
+            confirmed = []
+            for finding in findings.effective_findings(directory):
+                if finding["review_state"] != "unreviewed":
+                    continue
+                findings.record_review(
+                    directory, finding["finding_id"], "confirm",
+                    reviewer=reviewer, reason="bulk auto-approval")
+                confirmed.append(finding["finding_id"])
+        except (KeyError, TypeError, findings.FindingError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        return {"confirmed": confirmed}
+
     @app.post("/api/v1/retrieve/{specimen_id}")
     def v1_retrieve(specimen_id: str) -> Any:
         from scripts import v1_findings as findings

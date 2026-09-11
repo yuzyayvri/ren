@@ -113,6 +113,7 @@ async function loadIndex(i) {
     const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = S.imgURL;
   });
   S.overlayImg = null; S.boxes = []; S.instances = []; S.highlight = null;
+  if (!S.reviewMode) S.reviewMode = "manual";
   S.isV1 = /^[0-9a-f]{12}$/.test(spec.id);
   $("analyze").style.display = S.isV1 ? "" : "none";
   $("import-note").textContent = "";
@@ -148,6 +149,27 @@ async function refreshV1Overlays() {
     draw();
   } catch { /* overlay refresh is best-effort; list state is authoritative */ }
 }
+function reviewModeBar(unreviewed) {
+  return `<div class="dim">mode:
+    <button class="action${S.reviewMode === "manual" ? " primary" : ""}" id="mode-manual">Manual Approve</button>
+    <button class="action${S.reviewMode === "auto" ? " primary" : ""}" id="mode-auto">Approve For Me</button></div>` +
+    (S.reviewMode === "auto" && unreviewed > 0
+      ? `<div><button class="action primary" id="approve-all">approve all ${unreviewed} unreviewed</button></div>` : "");
+}
+function bindReviewModeBar() {
+  const manual = $("mode-manual"), auto = $("mode-auto"), all = $("approve-all");
+  if (manual) manual.addEventListener("click", () => { S.reviewMode = "manual"; loadV1Findings(); });
+  if (auto) auto.addEventListener("click", () => { S.reviewMode = "auto"; loadV1Findings(); });
+  if (all) all.addEventListener("click", async () => {
+    const id = S.specimens[S.index].id;
+    const r = await api(`/api/v1/reviews/bulk`, {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({specimen_id: id, action: "confirm", reviewer: "workstation"})});
+    $("st-job").textContent = `auto-approved ${r.confirmed.length}`;
+    await loadV1Findings();
+    refreshV1Overlays();
+  });
+}
 async function loadV1Findings() {
   const id = S.specimens[S.index].id;
   const el = $("findings");
@@ -163,6 +185,9 @@ async function loadV1Findings() {
         <button class="action" data-act="reject" data-fid="${f.finding_id}">reject</button>
       </div>`).join("") || `<span class="dim">no findings</span>`;
     if (side) side.scrollTop = scrollTop;
+    const unreviewed = r.findings.filter((f) => f.review_state === "unreviewed").length;
+    el.innerHTML = reviewModeBar(unreviewed) + el.innerHTML;
+    bindReviewModeBar();
     el.querySelectorAll("button[data-act]").forEach((b) => b.addEventListener("click", async () => {
       await api(`/api/v1/reviews`, {method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({specimen_id: id, finding_id: b.dataset.fid, action: b.dataset.act, reviewer: "workstation"})});
