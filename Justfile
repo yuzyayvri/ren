@@ -55,7 +55,7 @@ data-tissue:
 
 # --- serving -----------------------------------------------------------------
 
-serve-llm model="models/llm/openbiollm-llama3-8b.Q5_K_M.gguf":
+serve-llm model="models/llm/medgemma-1.5-4b-it-Q5_K_M.gguf":
     llama-server -m {{model}} --host 127.0.0.1 --port 8080 -ngl 999
 
 # --- phase 5 ---------------------------------------------------------------

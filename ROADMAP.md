@@ -311,6 +311,10 @@ local LLM.
 - **Part 2 stop (2026-09-11)**: OpenBioLLM vs MedGemma, 24 dev generations
   each, valid structured-response rate 0.0 both. No winner selected and no
   gates weakened. Part 3 awaits a prompt/decoding re-freeze decision.
+- **Part 2 v2 selection (2026-09-11)**: under the revised contract,
+  MedGemma selected (valid 1.0, recall 0.875/0.875, repeatability 0.75,
+  zero forbidden hits); OpenBioLLM vetoed (hallucinated case_ids, bone-marrow
+  location against packet limits). Blinded review unanimous for A=MedGemma.
 
 ## Phase 6 — Dashboard / UI
 
