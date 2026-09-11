@@ -9,7 +9,11 @@ const S = {
 const $ = (id) => document.getElementById(id);
 const api = async (path, opts) => {
   const r = await fetch(path, opts);
-  if (!r.ok) throw new Error(`${opts?.method || "GET"} ${path}: ${r.status}`);
+  if (!r.ok) {
+    let detail = "";
+    try { detail = (await r.clone().json()).detail || ""; } catch { /* non-JSON error */ }
+    throw new Error(`${opts?.method || "GET"} ${path}: ${r.status}${detail ? ` — ${detail}` : ""}`);
+  }
   const ct = r.headers.get("content-type") || "";
   return ct.includes("application/json") ? r.json() : r.blob();
 };

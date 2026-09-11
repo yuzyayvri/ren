@@ -528,6 +528,8 @@ def create_app() -> Any:
         from scripts import v1_retrieve as retrieval
 
         directory = _v1_dir(specimen_id)
+        if not (directory / "vision.json").is_file():
+            raise HTTPException(status_code=409, detail="specimen not analyzed yet")
         try:
             confirmed = findings.confirmed_findings(directory)
             if not confirmed:

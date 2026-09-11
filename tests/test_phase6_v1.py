@@ -157,3 +157,25 @@ def test_frontend_v1_wiring_present():
     for token in ("import-file", "v1RetrieveAll", "v1Synthesize", "export-btn",
                   "/api/v1/signoff", "S.highlight", "boxCodes"):
         assert token in text
+
+
+def test_retrieve_unanalyzed_is_409_not_500(client):
+    specimen_id = _import(client).json()["specimen_id"]
+    try:
+        r = client.post(f"/api/v1/retrieve/{specimen_id}")
+        assert r.status_code == 409, r.text[:200]
+    finally:
+        shutil.rmtree(ROOT / "artifacts" / "v1_specimens" / specimen_id)
+
+
+def test_evidence_ops_without_retrieval_are_422(client):
+    specimen_id = _import(client).json()["specimen_id"]
+    try:
+        assert client.post("/api/v1/evidence", json={
+            "specimen_id": specimen_id, "op": "exclude",
+            "finding_id": "F1", "evidence_id": "E1"}).status_code == 422
+        assert client.post("/api/v1/evidence", json={
+            "specimen_id": specimen_id, "op": "add",
+            "finding_id": "F1", "go_id": "GO:0006915"}).status_code == 422
+    finally:
+        shutil.rmtree(ROOT / "artifacts" / "v1_specimens" / specimen_id)

@@ -92,6 +92,19 @@ def save_evidence(specimen_dir: Path, sets: dict[str, Any]) -> Path:
     return path
 
 
+def _load_sets(specimen_dir: Path) -> dict[str, Any]:
+    path = specimen_dir / "evidence.json"
+    if not path.is_file():
+        raise RetrievalError("no retrieved evidence; run retrieval first")
+    try:
+        sets = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise RetrievalError(f"unreadable evidence file: {exc}") from exc
+    if not isinstance(sets, dict):
+        raise RetrievalError("unreadable evidence file")
+    return sets
+
+
 def add_manual_evidence(specimen_dir: Path, finding_id: str, go_id: str, *,
                         reviewer: str = "local") -> dict[str, Any]:
     import re
@@ -99,6 +112,7 @@ def add_manual_evidence(specimen_dir: Path, finding_id: str, go_id: str, *,
     if not re.fullmatch(r"GO:\d{7}", go_id or ""):
         raise RetrievalError(f"bad GO identifier: {go_id!r}")
     path = specimen_dir / "evidence.json"
+    sets = _load_sets(specimen_dir)
     sets = json.loads(path.read_text(encoding="utf-8"))
     if finding_id not in sets:
         raise RetrievalError(f"unknown finding: {finding_id}")
@@ -129,7 +143,7 @@ def add_manual_evidence(specimen_dir: Path, finding_id: str, go_id: str, *,
 def exclude_evidence(specimen_dir: Path, finding_id: str, evidence_id: str, *,
                      reviewer: str = "local") -> None:
     path = specimen_dir / "evidence.json"
-    sets = json.loads(path.read_text(encoding="utf-8"))
+    sets = _load_sets(specimen_dir)
     if finding_id not in sets:
         raise RetrievalError(f"unknown finding: {finding_id}")
     sets[finding_id]["excluded"].append({"evidence_id": evidence_id, "reviewer": reviewer})
