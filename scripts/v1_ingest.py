@@ -1,4 +1,4 @@
-"""v1 specimen ingestion: validate, normalize, register blood-smear PNGs.
+"""v1 specimen ingestion: validate, normalize, register blood-smear stills.
 
 Production intake for previously unseen specimens. Enforces the exact
 input contract the production vision path expects (uint8 RGB) and keeps
@@ -35,8 +35,10 @@ def ingest_file(source: Path, *, registry: Path | None = None) -> dict[str, Any]
     if registry is None:
         registry = REGISTRY
     raw = source.read_bytes() if source.is_file() else b""
-    if not raw.startswith(b"\x89PNG\r\n\x1a\n") or len(raw) < 100:
-        raise IngestError(f"not a PNG file: {source}")
+    is_png = raw.startswith(b"\x89PNG\r\n\x1a\n")
+    is_jpeg = raw.startswith(b"\xff\xd8\xff")
+    if (not is_png and not is_jpeg) or len(raw) < 100:
+        raise IngestError(f"not a PNG or JPEG file: {source}")
     from PIL import Image, ImageOps
 
     try:
@@ -44,8 +46,8 @@ def ingest_file(source: Path, *, registry: Path | None = None) -> dict[str, Any]
         image.load()
     except (OSError, ValueError) as exc:
         raise IngestError(f"corrupt PNG: {exc}") from exc
-    if image.format != "PNG":
-        raise IngestError(f"not a PNG file: {source}")
+    if image.format not in ("PNG", "JPEG", "MPO"):
+        raise IngestError(f"not a PNG or JPEG file: {source}")
     w, h = image.size
     if w < MIN_DIM or h < MIN_DIM:
         raise IngestError(f"image too small: {w}x{h}")

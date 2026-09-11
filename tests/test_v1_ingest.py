@@ -37,6 +37,15 @@ def test_normalization_repeatable(tmp_path, monkeypatch):
         assert hashlib.sha256(data).hexdigest()
 
 
+def test_accepts_jpeg_stills(tmp_path, monkeypatch):
+    from PIL import Image
+
+    monkeypatch.setattr(ingest, "REGISTRY", tmp_path / "reg")
+    Image.new("RGB", (200, 200), (9, 9, 9)).save(tmp_path / "a.jpg")
+    record = ingest.ingest_file(tmp_path / "a.jpg")
+    assert record["content_bytes"] > 100
+
+
 def test_rejects_non_png(tmp_path, monkeypatch):
     monkeypatch.setattr(ingest, "REGISTRY", tmp_path / "reg")
     fake = tmp_path / "fake.png"
