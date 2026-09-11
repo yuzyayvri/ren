@@ -220,3 +220,113 @@ def test_review_mode_toggle_present():
     text = (ROOT / "dashboard" / "app.js").read_text()
     assert "Manual Approve" in text and "Approve For Me" in text
     assert "approve-all" in text and "reviewMode" in text
+
+
+def _v1_specimen_with_vision(client, label="WBC"):
+    specimen_id = _import(client).json()["specimen_id"]
+    directory = ROOT / "artifacts" / "v1_specimens" / specimen_id
+    vision = {"specimen_sha256": "x", "models": {},
+              "findings": [{"finding_id": "F1", "label": label, "confidence": 0.9,
+                            "region": {"box_xyxy": [1, 1, 5, 5]}, "source": "machine",
+                            "specimen_id": specimen_id}]}
+    (directory / "vision.json").write_text(json.dumps(vision))
+    client.post("/api/v1/reviews", json={
+        "specimen_id": specimen_id, "finding_id": "F1", "action": "confirm"})
+    return specimen_id, directory
+
+
+def _v1_synthesis(directory, label="WBC", go="GO:0002443"):
+    from scripts.phase5_packet import build_packet
+    from scripts.phase5_render import render_note
+    from scripts.phase5_validate import validate_response
+
+    packet = build_packet(f"v1-{directory.name}", "phase3-txl",
+                          [{"finding_id": "F1", "label": label, "confidence": 0.9,
+                            "qualifier": "observed"}],
+                          [{"evidence_id": "E1", "go_id": go, "name": "n",
+                            "definition": "d", "rank": 1, "mode": "hybrid", "query": "q"}],
+                          ["image-level-only", "no-patient-linkage"])
+    response = {"schema": "phase5-response-v1", "case_id": packet["case_id"],
+                "abstained": False,
+                "claims": [{"claim_id": "C1", "text": f"{label} seen, {go}.",
+                            "evidence_ids": ["E1"], "finding_ids": ["F1"]}]}
+    validated = validate_response(packet, response)
+    (directory / "evidence.json").write_text(json.dumps({
+        "F1": {"query": "q", "rule": "r", "qualifier": "observed", "retrieved_unix": 1.0,
+               "evidence": [{"evidence_id": "E1", "go_id": go, "name": "n",
+                             "definition": "d", "rank": 1, "mode": "hybrid", "query": "q",
+                             "origin": "auto-r", "finding_id": "F1"}],
+               "excluded": [], "manual_adds": []}}))
+    (directory / "synthesis.json").write_text(json.dumps({
+        "status": "ok", "packet": packet, "validated": validated,
+        "note": render_note(packet, validated)}))
+    return packet
+
+
+def test_signoff_rejects_stale_synthesis(client):
+    specimen_id, directory = _v1_specimen_with_vision(client)
+    try:
+        _v1_synthesis(directory)
+        assert client.post(f"/api/v1/signoff/{specimen_id}", json={}).status_code == 200
+        client.post("/api/v1/reviews", json={
+            "specimen_id": specimen_id, "finding_id": "F1", "action": "correct",
+            "changes": {"qualifier": "uncertain"}})
+        r = client.post(f"/api/v1/signoff/{specimen_id}", json={})
+        assert r.status_code == 409, r.text[:200]
+        lines = (directory / "signoffs.jsonl").read_text().strip().splitlines()
+        assert len(lines) == 1
+    finally:
+        shutil.rmtree(directory)
+
+
+def test_cancelled_job_stays_cancelled(client, monkeypatch):
+    import time as _time
+
+    started = {}
+
+    def slow(packet, base_url, timeout_s=600.0, transport=None):
+        started["ran"] = True
+        _time.sleep(2)
+        return {"status": "ok", "packet": packet, "validated": {"abstained": True},
+                "note": "n"}
+
+    import scripts.phase5_synthesize as synthesis
+
+    monkeypatch.setattr(synthesis, "synthesize_packet", slow)
+    packet = {"schema": "phase5-packet-v1", "case_id": "c", "source_stage": "phase3-txl",
+              "findings": [], "context": [], "limitations": []}
+    job_id = client.post("/api/jobs/synthesize", json={"packet": packet}).json()["job_id"]
+    assert client.delete(f"/api/jobs/{job_id}").json()["state"] == "cancelled"
+    _time.sleep(2.5)
+    assert client.get(f"/api/jobs/{job_id}").json()["state"] == "cancelled"
+
+
+def test_v1_cancel_mid_synthesis_leaves_state(client, monkeypatch):
+    import time as _time
+
+    import scripts.phase5_synthesize as synthesis
+
+    specimen_id, directory = _v1_specimen_with_vision(client)
+    try:
+        client.post("/api/v1/reviews", json={
+            "specimen_id": specimen_id, "finding_id": "F1", "action": "confirm"})
+        (directory / "evidence.json").write_text(json.dumps({
+            "F1": {"query": "q", "rule": "r", "qualifier": "observed", "retrieved_unix": 1.0,
+                   "evidence": [{"evidence_id": "E1", "go_id": "GO:0002443", "name": "n",
+                                 "definition": "d", "rank": 1, "mode": "hybrid", "query": "q",
+                                 "origin": "auto-r", "finding_id": "F1"}],
+                   "excluded": [], "manual_adds": []}}))
+
+        def slow(packet, base_url, timeout_s=600.0, transport=None):
+            _time.sleep(2)
+            return {"status": "ok", "packet": packet,
+                    "validated": {"abstained": True}, "note": "n"}
+
+        monkeypatch.setattr(synthesis, "synthesize_packet", slow)
+        job_id = client.post(f"/api/v1/synthesize/{specimen_id}").json()["job_id"]
+        assert client.delete(f"/api/jobs/{job_id}").json()["state"] == "cancelled"
+        _time.sleep(2.5)
+        assert client.get(f"/api/jobs/{job_id}").json()["state"] == "cancelled"
+        assert not (directory / "synthesis.json").is_file()
+    finally:
+        shutil.rmtree(directory)

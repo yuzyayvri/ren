@@ -411,14 +411,7 @@ def create_app() -> Any:
             packet = validate_packet(body["packet"])
         except (KeyError, PacketError, TypeError, ValueError):
             raise HTTPException(status_code=422, detail="bad packet")
-        job_id = uuid.uuid4().hex[:12]
-        with lock:
-            jobs[job_id] = {"id": job_id, "state": "queued", "progress": 0.0}
-        worker = threading.Thread(target=_run_synthesis_job, args=(app, jobs, lock, job_id, packet),
-                                  daemon=True)
-        with lock:
-            jobs[job_id]["state"] = "running"
-        worker.start()
+        job_id = _start_job(lambda jid: _run_synthesis_job(app, jobs, lock, jid, packet))
         return {"job_id": job_id}
 
     @app.get("/api/jobs/{job_id}")
@@ -440,9 +433,16 @@ def create_app() -> Any:
             job["state"] = "cancelled"
             return {"id": job_id, "state": "cancelled"}
 
+    def _evict_jobs() -> None:
+        terminal = [key for key, job in jobs.items()
+                    if job["state"] in ("done", "failed", "cancelled")]
+        for key in terminal[: max(0, len(terminal) + 1 - 128)]:
+            del jobs[key]
+
     def _start_job(fn: Any, *args: Any) -> str:
         job_id = uuid.uuid4().hex[:12]
         with lock:
+            _evict_jobs()
             jobs[job_id] = {"id": job_id, "state": "queued", "progress": 0.0}
         worker = threading.Thread(target=fn, args=(job_id, *args), daemon=True)
         with lock:
@@ -485,9 +485,13 @@ def create_app() -> Any:
 
             try:
                 with lock:
+                    if jobs[job_id]["state"] == "cancelled":
+                        return
                     jobs[job_id]["progress"] = 0.3
                 result = vision.analyze_specimen(specimen_id)
                 with lock:
+                    if jobs[job_id]["state"] == "cancelled":
+                        return
                     jobs[job_id].update({"state": "done", "progress": 1.0,
                                          "result": {"findings": len(result["findings"]),
                                                     "detections": result["detections"]}})
@@ -609,12 +613,16 @@ def create_app() -> Any:
 
             try:
                 with lock:
+                    if jobs[job_id]["state"] == "cancelled":
+                        return
                     jobs[job_id]["progress"] = 0.3
                 result = synthesize_packet(packet, "http://127.0.0.1:8080")
-                if result["status"] == "ok":
-                    (directory / "synthesis.json").write_text(
-                        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
                 with lock:
+                    if jobs[job_id]["state"] == "cancelled":
+                        return
+                    if result["status"] == "ok":
+                        (directory / "synthesis.json").write_text(
+                            json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
                     jobs[job_id].update({"state": "done" if result["status"] == "ok" else "failed",
                                          "progress": 1.0, "result": result,
                                          "error": result.get("failure")})
@@ -627,7 +635,9 @@ def create_app() -> Any:
 
     @app.post("/api/v1/signoff/{specimen_id}")
     def v1_signoff(specimen_id: str, body: dict[str, Any]) -> Any:
-        from scripts.phase5_packet import packet_digest
+        from scripts import v1_findings as findings
+        from scripts import v1_retrieve as retrieval
+        from scripts.phase5_packet import build_packet, canonical_bytes, packet_digest
 
         directory = _v1_dir(specimen_id)
         synthesis_path = directory / "synthesis.json"
@@ -636,6 +646,14 @@ def create_app() -> Any:
         synthesis = json.loads(synthesis_path.read_text(encoding="utf-8"))
         if synthesis.get("status") != "ok" or "validated" not in synthesis:
             raise HTTPException(status_code=409, detail="no valid synthesis to sign")
+        current = build_packet(
+            f"v1-{specimen_id}", "phase3-txl",
+            findings.to_packet_findings(findings.confirmed_findings(directory)),
+            retrieval.to_packet_context(directory),
+            ["image-level-only", "no-patient-linkage"])
+        if sha256_bytes(canonical_bytes(current)) != packet_digest(synthesis["packet"]):
+            raise HTTPException(status_code=409,
+                                detail="findings or evidence changed since synthesis; re-synthesize")
         record = {"schema": "v1-signoff-v1", "specimen_id": specimen_id,
                   "packet_sha256": packet_digest(synthesis["packet"]),
                   "note_sha256": sha256_bytes(synthesis["note"].encode()),
@@ -643,6 +661,8 @@ def create_app() -> Any:
                   "note": body.get("note"), "unix_time": time.time()}
         (directory / "signoff.json").write_text(
             json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        with (directory / "signoffs.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
         return record
 
     @app.get("/api/v1/export/{specimen_id}")
