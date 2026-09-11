@@ -88,3 +88,11 @@ verify-phase5-v2:
 # Synthetic smoke gate per candidate (mechanism check only, never scored).
 smoke-phase5 candidate:
     /tmp/run_python.sh scripts/phase5_compare.py smoke --candidate {{candidate}} --protocol phase5_v2
+
+# Production synthesis from a pinned packet (frozen winner, loopback only).
+synthesize-phase5 packet out:
+    /tmp/run_python.sh scripts/phase5_synthesize.py from-packet --packet {{packet}} --out {{out}}
+
+# Guarded final acceptance (preconditions check only shows readiness).
+final-preconditions:
+    /tmp/run_python.sh scripts/phase5_final.py preconditions
