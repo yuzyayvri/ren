@@ -315,6 +315,9 @@ local LLM.
   MedGemma selected (valid 1.0, recall 0.875/0.875, repeatability 0.75,
   zero forbidden hits); OpenBioLLM vetoed (hallucinated case_ids, bone-marrow
   location against packet limits). Blinded review unanimous for A=MedGemma.
+- **Part 3 acceptance (2026-09-11)**: final set opened once; 6 cases x 3
+  repeats all pass with identical repeats; human review accepted.
+  Phase 5 complete.
 
 ## Phase 6 — Dashboard / UI
 
