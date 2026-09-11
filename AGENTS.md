@@ -75,6 +75,11 @@ convenience so a session doesn't re-derive them:
 - **Phase 2 exception**: a separate trainable HoVer-Net-fast-style network is
   permitted for PanNuke instance segmentation. This is not permission to
   fine-tune or replace Path Foundation, which remains frozen.
+- **Phase 4 retrieval must go through the bound loader**:
+  `scripts/phase4_snapshot_reconciliation.py::load_bound_query`. The plain
+  default path raises by design — the v3 freeze records predate the two
+  authorized query-layer changes (issue #2, reconciled without sealed
+  mutation). Never "fix" this by editing sealed v3/v4 artifacts or code.
 - **Cognitive synthesis LLMs**: `OpenBioLLM-Llama3-8B` and `MedGemma 1.5 4B
   Q5_K_M`, both GGUF and downloaded. Both are **candidates** to compare; pick a
   winner once you have comparison numbers and drop the other. Don't ship both.
