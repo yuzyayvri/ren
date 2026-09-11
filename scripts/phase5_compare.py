@@ -16,11 +16,14 @@ import json
 import os
 import statistics
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 PROTO = ROOT / "protocols" / "phase5_v1"
 OUT = ROOT / "artifacts" / "phase5_comparison_v1"
 
