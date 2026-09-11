@@ -1,0 +1,36 @@
+{
+  "case_id": "smoke-synthetic-01",
+  "context": [
+    {
+      "definition": "Synthetic definition one; not from any corpus.",
+      "evidence_id": "E1",
+      "go_id": "GO:9999991",
+      "mode": "hybrid",
+      "name": "synthetic process one",
+      "query": "synthetic",
+      "rank": 1
+    },
+    {
+      "definition": "Synthetic definition two; not from any corpus.",
+      "evidence_id": "E2",
+      "go_id": "GO:9999992",
+      "mode": "hybrid",
+      "query": "synthetic",
+      "rank": 2,
+      "name": "synthetic process two"
+    }
+  ],
+  "findings": [
+    {
+      "confidence": 0.9,
+      "count": 3,
+      "finding_id": "F1",
+      "label": "WBC",
+      "qualifier": "observed"
+    }
+  ],
+  "limitations": [],
+  "schema": "phase5-packet-v1",
+  "selection_eligible": false,
+  "source_stage": "phase3-txl"
+}

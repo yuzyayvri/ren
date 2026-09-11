@@ -1,0 +1,77 @@
+{
+  "backend": "llama.cpp local llama-server",
+  "context": 8192,
+  "endpoint": "http://127.0.0.1:8080/v1/chat/completions",
+  "microstat": 0,
+  "mirostat": 0,
+  "n_predict": 1024,
+  "response_format": {
+    "json_schema": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Formal shape of phase5-response-v1. Structural only; semantic rules (case_id match, reference validity, abstention logic) stay with the unchanged validator.",
+        "properties": {
+          "abstained": {
+            "type": "boolean"
+          },
+          "abstention_reason": {
+            "type": "string"
+          },
+          "case_id": {
+            "type": "string"
+          },
+          "claims": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "claim_id": {
+                  "type": "string"
+                },
+                "evidence_ids": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "finding_ids": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "claim_id",
+                "evidence_ids",
+                "finding_ids",
+                "text"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "schema": {
+            "const": "phase5-response-v1"
+          }
+        },
+        "required": [
+          "abstained",
+          "case_id",
+          "claims",
+          "schema"
+        ],
+        "title": "phase5-response-v1",
+        "type": "object"
+      }
+    },
+    "type": "json_schema"
+  },
+  "seed": 20260911,
+  "temperature": 0.0,
+  "top_k": 1,
+  "top_p": 1.0
+}

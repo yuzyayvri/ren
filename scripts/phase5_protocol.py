@@ -245,6 +245,104 @@ def verify(*, rehash_models: bool = False) -> dict[str, object]:
     return {"status": "verified", "go_membership": go_counts}
 
 
+V2DIR = ROOT / "protocols" / "phase5_v2"
+
+V2_FILES = (
+    "prompt.md",
+    "decoding.json",
+    "response_schema.json",
+    "smoke_packet.json",
+)
+
+# Carried forward by hash reference from the v1 freeze; never copied.
+V2_REFERENCES = (
+    "benchmark_dev.json",
+    "benchmark_final.json",
+    "scoring.json",
+    "winner_rule.json",
+    "lifecycle.json",
+    "models.json",
+)
+
+
+def sync_v2_decoding() -> None:
+    """Rebuild decoding.json's embedded schema from response_schema.json.
+
+    The embedded copy is what is actually sent to the server, so it is
+    generated mechanically at freeze time. verify_v2 rechecks the sync,
+    making divergence machine-detectable instead of silent.
+    """
+    schema = json.loads((V2DIR / "response_schema.json").read_text(encoding="utf-8"))
+    decoding = json.loads((V2DIR / "decoding.json").read_text(encoding="utf-8"))
+    decoding["response_format"] = {"type": "json_schema", "json_schema": {"schema": schema}}
+    (V2DIR / "decoding.json").write_text(
+        json.dumps(decoding, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def check_v2_decoding_sync() -> None:
+    schema = json.loads((V2DIR / "response_schema.json").read_text(encoding="utf-8"))
+    decoding = json.loads((V2DIR / "decoding.json").read_text(encoding="utf-8"))
+    if decoding.get("response_format") != {"type": "json_schema", "json_schema": {"schema": schema}}:
+        raise RuntimeError("decoding.json embedded schema drifted from response_schema.json")
+
+
+def freeze_v2() -> dict[str, object]:
+    from scripts.phase5_compare import append_lifecycle
+
+    verify()
+    sync_v2_decoding()
+    v1_manifest_sha = sha256_path(PROTO / "freeze_manifest.json")
+    manifest = {
+        "schema": "phase5-freeze-v2",
+        "files": {name: sha256_path(V2DIR / name) for name in V2_FILES},
+        "references": {name: sha256_path(PROTO / name) for name in V2_REFERENCES},
+        "supersedes": {"phase5_freeze_v1_manifest_sha256": v1_manifest_sha},
+        "status": "frozen_v2_no_candidate_output",
+    }
+    new_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
+    manifest_path = V2DIR / "freeze_manifest.json"
+    if manifest_path.is_file() and manifest_path.read_bytes() == new_bytes:
+        manifest["manifest_sha256"] = sha256_path(manifest_path)
+        return manifest
+    manifest_path.write_bytes(new_bytes)
+    manifest_sha = sha256_path(manifest_path)
+    append_lifecycle("part1_superseded", {
+        "superseded_manifest_sha256": v1_manifest_sha,
+        "superseding_manifest_sha256": manifest_sha,
+        "note": "v1 remains valid history; v2 governs forward work.",
+    })
+    append_lifecycle("phase5_v2_frozen", {
+        "manifest_sha256": manifest_sha,
+        "note": "Contract revised; no candidate output exposed.",
+    })
+    manifest["manifest_sha256"] = manifest_sha
+    return manifest
+
+
+def verify_v2() -> dict[str, object]:
+    manifest_path = V2DIR / "freeze_manifest.json"
+    if not manifest_path.is_file():
+        raise RuntimeError("v2 protocol is not frozen; run freeze-v2 first")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    actual = {name: sha256_path(V2DIR / name) for name in V2_FILES}
+    if actual != manifest["files"]:
+        raise RuntimeError("v2 protocol files differ from frozen manifest")
+    check_v2_decoding_sync()
+    verify()
+    references = {name: sha256_path(PROTO / name) for name in V2_REFERENCES}
+    if references != manifest["references"]:
+        raise RuntimeError("v1 references changed since v2 freeze")
+    if manifest["supersedes"]["phase5_freeze_v1_manifest_sha256"] != sha256_path(
+        PROTO / "freeze_manifest.json"
+    ):
+        raise RuntimeError("superseded v1 manifest changed")
+    ledger = (PROTO / "lifecycle.jsonl").read_text(encoding="utf-8")
+    if "part1_superseded" not in ledger or "phase5_v2_frozen" not in ledger:
+        raise RuntimeError("v2 lifecycle events are missing")
+    return {"status": "verified"}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -252,11 +350,17 @@ def main() -> int:
     freeze_cmd.add_argument("--rehash-openbiollm", action="store_true")
     verify_cmd = sub.add_parser("verify")
     verify_cmd.add_argument("--rehash-models", action="store_true")
+    sub.add_parser("freeze-v2")
+    sub.add_parser("verify-v2")
     args = parser.parse_args()
     if args.command == "freeze":
         result = freeze(rehash_openbiollm=args.rehash_openbiollm)
-    else:
+    elif args.command == "verify":
         result = verify(rehash_models=args.rehash_models)
+    elif args.command == "freeze-v2":
+        result = freeze_v2()
+    else:
+        result = verify_v2()
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 

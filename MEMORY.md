@@ -840,3 +840,14 @@ phase stops with no winner and no gate weakening; Part 3 is blocked on a
 prompt/decoding re-freeze decision. Records in
 artifacts/phase5_comparison_v1/; lifecycle event part2_stopped.
 
+## Phase 5 Part 2 v2 selection (2026-09-11)
+
+Rerun under the v2 contract selected MedGemma: valid rate 1.0 with
+finding/GO recall 0.875/0.875 and repeatability 0.75, no forbidden hits;
+OpenBioLLM valid 0.833 with hallucinated case_ids and a bone-marrow
+location contradicting the packet limitations. Blinded review was
+unanimous (implementer, user, second reviewer): A accept, B reject;
+mapping A=MedGemma, B=OpenBioLLM. Lifecycle event part2_selected;
+records in artifacts/phase5_comparison_v2/. serve-llm default now
+MedGemma; OpenBioLLM kept as local audit copy only.
+

@@ -19,7 +19,16 @@ Transport = Callable[[str, dict[str, Any], float], dict[str, Any]]
 
 
 class SynthesisError(RuntimeError):
-    """Any failure to obtain a usable structured response. Fail closed."""
+    """Any failure to obtain a usable structured response. Fail closed.
+
+    When the server returned assistant content that could not be parsed,
+    the literal content is attached as raw_content for audit. It is
+    never treated as a valid response.
+    """
+
+    def __init__(self, message: str, raw_content: str | None = None) -> None:
+        super().__init__(message)
+        self.raw_content = raw_content
 
 
 def build_request(
@@ -42,7 +51,7 @@ def build_request(
         "top_p": decoding["top_p"],
         "seed": decoding["seed"],
         "n_predict": decoding["n_predict"],
-        "response_format": {"type": "json_object"},
+        "response_format": decoding.get("response_format", {"type": "json_object"}),
     }
     return payload
 
@@ -100,11 +109,11 @@ def extract_json(body: dict[str, Any]) -> dict[str, Any]:
     except (KeyError, IndexError, TypeError) as exc:
         raise SynthesisError(f"synthesis response has no chat content: {exc}") from exc
     if not isinstance(content, str) or not content.strip():
-        raise SynthesisError("synthesis response content is empty")
+        raise SynthesisError("synthesis response content is empty", content if isinstance(content, str) else None)
     try:
         parsed = _json.loads(content)
     except ValueError as exc:
-        raise SynthesisError(f"synthesis response is not valid JSON: {exc}") from exc
+        raise SynthesisError(f"synthesis response is not valid JSON: {exc}", content) from exc
     if not isinstance(parsed, dict):
-        raise SynthesisError("synthesis response JSON is not an object")
+        raise SynthesisError("synthesis response JSON is not an object", content)
     return parsed

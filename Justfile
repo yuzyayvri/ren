@@ -55,7 +55,7 @@ data-tissue:
 
 # --- serving -----------------------------------------------------------------
 
-serve-llm model="models/llm/openbiollm-llama3-8b.Q5_K_M.gguf":
+serve-llm model="models/llm/medgemma-1.5-4b-it-Q5_K_M.gguf":
     llama-server -m {{model}} --host 127.0.0.1 --port 8080 -ngl 999
 
 # --- phase 5 ---------------------------------------------------------------
@@ -77,3 +77,14 @@ compare-phase5:
 # Aggregate saved comparison runs without touching any server.
 score-phase5:
     /tmp/run_python.sh scripts/phase5_compare.py score
+
+# Freeze/verify the revised v2 synthesis protocol (no LLM is run).
+freeze-phase5-v2:
+    /tmp/run_python.sh scripts/phase5_protocol.py freeze-v2
+
+verify-phase5-v2:
+    /tmp/run_python.sh scripts/phase5_protocol.py verify-v2
+
+# Synthetic smoke gate per candidate (mechanism check only, never scored).
+smoke-phase5 candidate:
+    /tmp/run_python.sh scripts/phase5_compare.py smoke --candidate {{candidate}} --protocol phase5_v2
