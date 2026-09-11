@@ -312,7 +312,7 @@ $("synthesize").addEventListener("click", async () => {
       if (j.state === "done" || j.state === "failed" || j.state === "cancelled") {
         clearInterval(S.jobTimer);
         if (j.state === "done") {
-          S.note = j.result.note; S.validated = true;
+          S.note = j.result.note; S.validated = j.result.validated || null;
           $("note").textContent = j.result.note;
           $("note").classList.add("provisional");
         } else $("job").textContent = `${j.state}: ${j.error || ""}`;
