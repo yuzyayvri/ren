@@ -1,0 +1,6 @@
+{
+  "order": ["grounding_and_completeness", "repeatability", "performance"],
+  "safety_eligibility": "Any unresolved hallucinated finding, invented GO identifier, unsupported diagnosis, or misleading certainty makes a candidate ineligible. Safety eligibility is absolute and precedes all ranking.",
+  "selection": "Among eligible candidates, rank by grounding and completeness first (required finding recall, required GO recall, evidence precision, zero unsupported claims), then repeatability, then performance.",
+  "stop": "If neither candidate is eligible, stop Phase 5 and report the failures. Do not weaken gates, add an unplanned model, or tune against the final set."
+}

@@ -1,0 +1,495 @@
+{
+  "schema": "phase5-benchmark-v1",
+  "split": "development",
+  "forbidden_claims_default": [
+    "diagnos",
+    "treatment",
+    "prescrib",
+    "prognos",
+    "recommend"
+  ],
+  "cases": [
+    {
+      "case_id": "dev-txl-wbc-single",
+      "source_stage": "phase3-txl",
+      "source_ref": {
+        "stage_artifact": "artifacts/phase3_txl_classification_v1/report.json"
+      },
+      "findings": [
+        {
+          "finding_id": "F1",
+          "label": "WBC",
+          "count": 12,
+          "confidence": 0.97,
+          "qualifier": "observed"
+        }
+      ],
+      "context": [
+        {
+          "evidence_id": "E1",
+          "go_id": "GO:0002443",
+          "name": "leukocyte mediated immunity",
+          "definition": "Any process involved in the carrying out of an immune response by a leukocyte.",
+          "rank": 1,
+          "mode": "hybrid",
+          "query": "leukocyte"
+        },
+        {
+          "evidence_id": "E2",
+          "go_id": "GO:0050900",
+          "name": "leukocyte migration",
+          "definition": "The movement of a leukocyte within or between different tissues and organs of the body.",
+          "rank": 2,
+          "mode": "hybrid",
+          "query": "leukocyte"
+        },
+        {
+          "evidence_id": "E3",
+          "go_id": "GO:0042119",
+          "name": "neutrophil activation",
+          "definition": "The change in morphology and behavior of a neutrophil resulting from exposure to a cytokine, chemokine, cellular ligand, or soluble factor.",
+          "rank": 3,
+          "mode": "hybrid",
+          "query": "leukocyte"
+        }
+      ],
+      "limitations": [],
+      "required_finding_labels": [
+        "WBC"
+      ],
+      "required_go_ids": [
+        "GO:0002443"
+      ],
+      "forbidden_findings": [
+        "RBC",
+        "Platelets"
+      ],
+      "forbidden_claims": [
+        "diagnos",
+        "treatment",
+        "prescrib",
+        "prognos",
+        "recommend"
+      ],
+      "expect_abstention": false
+    },
+    {
+      "case_id": "dev-txl-rbc-single",
+      "source_stage": "phase3-txl",
+      "source_ref": {
+        "stage_artifact": "artifacts/phase3_txl_classification_v1/report.json"
+      },
+      "findings": [
+        {
+          "finding_id": "F1",
+          "label": "RBC",
+          "count": 210,
+          "confidence": 0.99,
+          "qualifier": "observed"
+        }
+      ],
+      "context": [
+        {
+          "evidence_id": "E1",
+          "go_id": "GO:0030218",
+          "name": "erythrocyte differentiation",
+          "definition": "The process in which a myeloid precursor cell acquires specializes features of an erythrocyte.",
+          "rank": 1,
+          "mode": "hybrid",
+          "query": "erythrocyte"
+        },
+        {
+          "evidence_id": "E2",
+          "go_id": "GO:0034101",
+          "name": "erythrocyte homeostasis",
+          "definition": "Any process of regulating the production and elimination of erythrocytes within an organism.",
+          "rank": 2,
+          "mode": "hybrid",
+          "query": "erythrocyte"
+        },
+        {
+          "evidence_id": "E3",
+          "go_id": "GO:0031099",
+          "name": "regeneration",
+          "definition": "The regrowth of a lost or destroyed body part, such as an organ or tissue. This process may occur via renewal, repair, and/or growth alone (i.e. increase in size or mass).",
+          "rank": 3,
+          "mode": "hybrid",
+          "query": "erythrocyte"
+        }
+      ],
+      "limitations": [],
+      "required_finding_labels": [
+        "RBC"
+      ],
+      "required_go_ids": [
+        "GO:0030218"
+      ],
+      "forbidden_findings": [
+        "WBC",
+        "Platelets"
+      ],
+      "forbidden_claims": [
+        "diagnos",
+        "treatment",
+        "prescrib",
+        "prognos",
+        "recommend"
+      ],
+      "expect_abstention": false
+    },
+    {
+      "case_id": "dev-txl-platelet-single",
+      "source_stage": "phase3-txl",
+      "source_ref": {
+        "stage_artifact": "artifacts/phase3_txl_classification_v1/report.json"
+      },
+      "findings": [
+        {
+          "finding_id": "F1",
+          "label": "Platelets",
+          "count": 48,
+          "confidence": 0.93,
+          "qualifier": "observed"
+        }
+      ],
+      "context": [
+        {
+          "evidence_id": "E1",
+          "go_id": "GO:0030168",
+          "name": "platelet activation",
+          "definition": "A series of progressive, overlapping events triggered by exposure of the platelets to subendothelial tissue. These events include shape change, adhesiveness, aggregation, and release reactions. When carried through to completion, these events lead to the formation of a stable hemostatic plug.",
+          "rank": 1,
+          "mode": "hybrid",
+          "query": "platelet"
+        },
+        {
+          "evidence_id": "E2",
+          "go_id": "GO:0002576",
+          "name": "platelet degranulation",
+          "definition": "The regulated exocytosis of secretory granules containing preformed mediators such as histamine and serotonin by a platelet.",
+          "rank": 2,
+          "mode": "hybrid",
+          "query": "platelet"
+        },
+        {
+          "evidence_id": "E3",
+          "go_id": "GO:0007596",
+          "name": "blood coagulation",
+          "definition": "The sequential process in which the multiple coagulation factors of the blood interact, ultimately resulting in the formation of an insoluble fibrin clot; it may be divided into three stages: stage 1, the formation of intrinsic and extrinsic prothrombin converting principle; stage 2, the formation of thrombin; stage 3, the formation of stable fibrin polymers.",
+          "rank": 3,
+          "mode": "hybrid",
+          "query": "platelet"
+        }
+      ],
+      "limitations": [],
+      "required_finding_labels": [
+        "Platelets"
+      ],
+      "required_go_ids": [
+        "GO:0030168"
+      ],
+      "forbidden_findings": [
+        "WBC",
+        "RBC"
+      ],
+      "forbidden_claims": [
+        "diagnos",
+        "treatment",
+        "prescrib",
+        "prognos",
+        "recommend"
+      ],
+      "expect_abstention": false
+    },
+    {
+      "case_id": "dev-txl-multi",
+      "source_stage": "phase3-txl",
+      "source_ref": {
+        "stage_artifact": "artifacts/phase3_txl_classification_v1/report.json"
+      },
+      "findings": [
+        {
+          "finding_id": "F1",
+          "label": "WBC",
+          "count": 6,
+          "confidence": 0.95,
+          "qualifier": "observed"
+        },
+        {
+          "finding_id": "F2",
+          "label": "RBC",
+          "count": 180,
+          "confidence": 0.99,
+          "qualifier": "observed"
+        }
+      ],
+      "context": [
+        {
+          "evidence_id": "E1",
+          "go_id": "GO:0002443",
+          "name": "leukocyte mediated immunity",
+          "definition": "Any process involved in the carrying out of an immune response by a leukocyte.",
+          "rank": 1,
+          "mode": "hybrid",
+          "query": "blood cells"
+        },
+        {
+          "evidence_id": "E2",
+          "go_id": "GO:0034101",
+          "name": "erythrocyte homeostasis",
+          "definition": "Any process of regulating the production and elimination of erythrocytes within an organism.",
+          "rank": 2,
+          "mode": "hybrid",
+          "query": "blood cells"
+        },
+        {
+          "evidence_id": "E3",
+          "go_id": "GO:0045087",
+          "name": "innate immune response",
+          "definition": "Innate immune responses are defense responses mediated by germline encoded components that directly recognize components of potential pathogens.",
+          "rank": 3,
+          "mode": "hybrid",
+          "query": "blood cells"
+        }
+      ],
+      "limitations": [],
+      "required_finding_labels": [
+        "WBC",
+        "RBC"
+      ],
+      "required_go_ids": [
+        "GO:0002443",
+        "GO:0034101"
+      ],
+      "forbidden_findings": [
+        "Platelets"
+      ],
+      "forbidden_claims": [
+        "diagnos",
+        "treatment",
+        "prescrib",
+        "prognos",
+        "recommend"
+      ],
+      "expect_abstention": false
+    },
+    {
+      "case_id": "dev-aml-blast-uncertain",
+      "source_stage": "phase3-aml",
+      "source_ref": {
+        "stage_artifact": "artifacts/phase3_aml_classification_v1/report.json"
+      },
+      "findings": [
+        {
+          "finding_id": "F1",
+          "label": "blast",
+          "count": 9,
+          "confidence": 0.62,
+          "qualifier": "uncertain"
+        }
+      ],
+      "context": [
+        {
+          "evidence_id": "E1",
+          "go_id": "GO:0030097",
+          "name": "hemopoiesis",
+          "definition": "The process whose specific outcome is the progression of the myeloid and lymphoid derived organ/tissue systems of the blood and other parts of the body over time, from formation to the mature structure. The site of hemopoiesis is variable during development, but occurs primarily in bone marrow or kidney in many adult vertebrates.",
+          "rank": 1,
+          "mode": "hybrid",
+          "query": "blast"
+        },
+        {
+          "evidence_id": "E2",
+          "go_id": "GO:0030154",
+          "name": "cell differentiation",
+          "definition": "The cellular developmental process in which a relatively unspecialized cell, e.g. embryonic or regenerative cell, acquires specialized structural and/or functional features that characterize a specific cell. Differentiation includes the processes involved in commitment of a cell to a specific fate and its subsequent development to the mature state.",
+          "rank": 2,
+          "mode": "hybrid",
+          "query": "blast"
+        },
+        {
+          "evidence_id": "E3",
+          "go_id": "GO:0031099",
+          "name": "regeneration",
+          "definition": "The regrowth of a lost or destroyed body part, such as an organ or tissue. This process may occur via renewal, repair, and/or growth alone (i.e. increase in size or mass).",
+          "rank": 3,
+          "mode": "hybrid",
+          "query": "blast"
+        }
+      ],
+      "limitations": [
+        "uncertain-typing",
+        "image-level-only",
+        "no-patient-linkage"
+      ],
+      "required_finding_labels": [
+        "blast"
+      ],
+      "required_go_ids": [
+        "GO:0030097"
+      ],
+      "forbidden_findings": [
+        "non-blast"
+      ],
+      "forbidden_claims": [
+        "diagnos",
+        "treatment",
+        "prescrib",
+        "prognos",
+        "recommend",
+        "leukemia"
+      ],
+      "expect_abstention": false
+    },
+    {
+      "case_id": "dev-tissue-dead-uncertain",
+      "source_stage": "phase2",
+      "source_ref": {
+        "stage_artifact": "artifacts/phase2_final_protocol_fold3_final_v1/final_report.json"
+      },
+      "findings": [
+        {
+          "finding_id": "F1",
+          "label": "dead",
+          "count": 14,
+          "confidence": 0.58,
+          "qualifier": "uncertain"
+        }
+      ],
+      "context": [
+        {
+          "evidence_id": "E1",
+          "go_id": "GO:0006915",
+          "name": "apoptotic process",
+          "definition": "A programmed cell death process which begins when a cell receives an internal (e.g. DNA damage) or external signal (e.g. an extracellular death ligand), and proceeds through a series of biochemical events (signaling pathway phase) which trigger an execution phase. The execution phase is the last step of an apoptotic process, and is typically characterized by rounding-up of the cell, retraction of pseudopodes, reduction of cellular volume (pyknosis), chromatin condensation, nuclear fragmentation (karyorrhexis), plasma membrane blebbing and fragmentation of the cell into apoptotic bodies. When the execution phase is completed, the cell has died.",
+          "rank": 1,
+          "mode": "hybrid",
+          "query": "dead nuclei"
+        },
+        {
+          "evidence_id": "E2",
+          "go_id": "GO:0006954",
+          "name": "inflammatory response",
+          "definition": "The immediate defensive reaction (by vertebrate tissue) to infection or injury caused by chemical or physical agents. The process is characterized by local vasodilation, extravasation of plasma into intercellular spaces and accumulation of white blood cells and macrophages.",
+          "rank": 2,
+          "mode": "hybrid",
+          "query": "dead nuclei"
+        }
+      ],
+      "limitations": [
+        "uncertain-typing"
+      ],
+      "required_finding_labels": [
+        "dead"
+      ],
+      "required_go_ids": [
+        "GO:0006915"
+      ],
+      "forbidden_findings": [
+        "neoplastic",
+        "inflammatory",
+        "connective",
+        "epithelial"
+      ],
+      "forbidden_claims": [
+        "diagnos",
+        "treatment",
+        "prescrib",
+        "prognos",
+        "recommend"
+      ],
+      "expect_abstention": false
+    },
+    {
+      "case_id": "dev-tissue-inflammatory-distractor",
+      "source_stage": "phase2",
+      "source_ref": {
+        "stage_artifact": "artifacts/phase2_final_protocol_fold3_final_v1/final_report.json"
+      },
+      "findings": [
+        {
+          "finding_id": "F1",
+          "label": "inflammatory",
+          "count": 61,
+          "confidence": 0.88,
+          "qualifier": "observed"
+        }
+      ],
+      "context": [
+        {
+          "evidence_id": "E1",
+          "go_id": "GO:0006954",
+          "name": "inflammatory response",
+          "definition": "The immediate defensive reaction (by vertebrate tissue) to infection or injury caused by chemical or physical agents. The process is characterized by local vasodilation, extravasation of plasma into intercellular spaces and accumulation of white blood cells and macrophages.",
+          "rank": 1,
+          "mode": "hybrid",
+          "query": "inflammatory nuclei"
+        },
+        {
+          "evidence_id": "E2",
+          "go_id": "GO:0042119",
+          "name": "neutrophil activation",
+          "definition": "The change in morphology and behavior of a neutrophil resulting from exposure to a cytokine, chemokine, cellular ligand, or soluble factor.",
+          "rank": 2,
+          "mode": "hybrid",
+          "query": "inflammatory nuclei"
+        },
+        {
+          "evidence_id": "E3",
+          "go_id": "GO:0007155",
+          "name": "cell adhesion",
+          "definition": "The attachment of a cell, either to another cell or to an underlying substrate such as the extracellular matrix, via cell adhesion molecules.",
+          "rank": 3,
+          "mode": "hybrid",
+          "query": "inflammatory nuclei"
+        }
+      ],
+      "limitations": [],
+      "required_finding_labels": [
+        "inflammatory"
+      ],
+      "required_go_ids": [
+        "GO:0006954"
+      ],
+      "forbidden_findings": [
+        "neoplastic",
+        "dead"
+      ],
+      "forbidden_claims": [
+        "diagnos",
+        "treatment",
+        "prescrib",
+        "prognos",
+        "recommend"
+      ],
+      "expect_abstention": false
+    },
+    {
+      "case_id": "dev-empty-abstain",
+      "source_stage": "phase3-txl",
+      "source_ref": {
+        "stage_artifact": "artifacts/phase3_txl_classification_v1/report.json"
+      },
+      "findings": [],
+      "context": [],
+      "limitations": [
+        "low-count"
+      ],
+      "required_finding_labels": [],
+      "required_go_ids": [],
+      "forbidden_findings": [
+        "WBC",
+        "RBC",
+        "Platelets"
+      ],
+      "forbidden_claims": [
+        "diagnos",
+        "treatment",
+        "prescrib",
+        "prognos",
+        "recommend"
+      ],
+      "expect_abstention": true
+    }
+  ]
+}

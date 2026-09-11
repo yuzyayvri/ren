@@ -1,0 +1,38 @@
+{
+  "files": {
+    "benchmark_dev.json": "60f2b5d767808ba49c889cc8aab21ee55ad4f3bab0e1fa3591726782875d9908",
+    "benchmark_final.json": "2ff8ace88e9e817604dd9ff0c77dcf3ed7b6b05682a4bd6480934daf23070c47",
+    "decoding.json": "6b7bef6f7db60a6f3e49462e9773ae36c71d6fe1b34ae8b3b508ea4619a01bec",
+    "lifecycle.json": "7f11514bab08638eae7fc11e1e17bfbb2d60345cae663c6e83c31e2ee9708503",
+    "prompt.md": "ef64cdbe4398cab2b03672652989333b5d7475919bb6474cf1960c64fc096755",
+    "scoring.json": "ced84f837f40a849ef5903e67669bfd98a46d09e68efae8682117ace39d05365",
+    "winner_rule.json": "69c64681e2b0367d5ce1d817b5bb700469e53516d9bf35f0c5250c93e4cf0a55"
+  },
+  "go_membership": {
+    "cases": {
+      "benchmark_dev.json": 8,
+      "benchmark_final.json": 6
+    },
+    "corpus_rows": 38245
+  },
+  "models": {
+    "medgemma-1.5-4b-it-Q5_K_M.gguf": {
+      "bytes": 2829699136,
+      "sha256": "1085085f6186e09f075dce216048e5b063ba419a5f8286d0cd66c74a4bb155d8"
+    },
+    "openbiollm-llama3-8b.Q5_K_M.gguf": {
+      "bytes": 5733499776,
+      "sha256": "1753c629bf99c261e8b92498d813f382f811e903cdc0e685a11d1689612b34ce"
+    }
+  },
+  "schema": "phase5-freeze-v1",
+  "status": "frozen_part1_no_candidate_output",
+  "upstream_notes": {
+    "phase4_v3_code_gate": {
+      "frozen_code_sha256": "2900b86b7b3dcb6b8f2884d1325ffc3217282bf4a6af6e4156d2e6f546d705b9",
+      "match": false,
+      "working_tree_code_sha256": "cce08d213454780fb2967a7857e9435bc7bb915a660a29bb8611bf68eaed5fed"
+    },
+    "phase4_v3_code_gate_note": "Pre-existing: the v3 python code-identity gate does not match its frozen manifest on this machine, so the v3 query layer refuses to load here. Every v3 data hash (protocol, database, documents, embeddings, source, models) still matches, and Phase 5 fixtures are proven directly against the sealed database and documents. No v3 file was modified by Part 1."
+  }
+}

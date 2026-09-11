@@ -17,7 +17,7 @@ rocm-check:
 models-llm:
     mkdir -p models/llm
     hf download aaditya/OpenBioLLM-Llama3-8B-GGUF --include "*Q5_K_M*" --local-dir models/llm
-    hf download MaziyarPanahi/BioMistral-7B-GGUF --include "*Q5_K_M*" --local-dir models/llm
+    hf download unsloth/medgemma-1.5-4b-it-GGUF --include "*Q5_K_M*" --local-dir models/llm
 
 # Vision-engine backbones — Virchow is gated but approves fast; path-foundation
 # is gated only by a click-through terms-of-use (no institutional-email wall,
@@ -31,7 +31,8 @@ models-embed:
     mkdir -p models/embed
     hf download microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext --local-dir models/embed/pubmedbert
 
-# Future, unselected candidates; pinned and verified by the dedicated scripts.
+# Pinned MedCPT retrieval artifacts plus the MedGemma Phase 5 candidate; verified
+# by the dedicated scripts.
 models-future-acquire:
     /tmp/run_python.sh scripts/acquire_future_models.py all
 
@@ -56,3 +57,14 @@ data-tissue:
 
 serve-llm model="models/llm/openbiollm-llama3-8b.Q5_K_M.gguf":
     llama-server -m {{model}} --host 127.0.0.1 --port 8080 -ngl 999
+
+# --- phase 5 ---------------------------------------------------------------
+
+# Freeze the Part 1 synthesis protocol (prompt, schemas, decoding, model
+# hashes, benchmark, scoring, winner rule, lifecycle). No LLM is run.
+freeze-phase5:
+    /tmp/run_python.sh scripts/phase5_protocol.py freeze
+
+# Verify the frozen Part 1 protocol without running any LLM.
+verify-phase5:
+    /tmp/run_python.sh scripts/phase5_protocol.py verify

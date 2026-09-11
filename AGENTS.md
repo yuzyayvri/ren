@@ -75,9 +75,10 @@ convenience so a session doesn't re-derive them:
 - **Phase 2 exception**: a separate trainable HoVer-Net-fast-style network is
   permitted for PanNuke instance segmentation. This is not permission to
   fine-tune or replace Path Foundation, which remains frozen.
-- **Cognitive synthesis LLMs**: `OpenBioLLM-Llama3-8B` and `BioMistral-7B`,
-  both GGUF, both downloaded. Both are **candidates** to compare; pick a winner
-  once you have comparison numbers and drop the other. Don't ship both.
+- **Cognitive synthesis LLMs**: `OpenBioLLM-Llama3-8B` and `MedGemma 1.5 4B
+  Q5_K_M`, both GGUF and downloaded. Both are **candidates** to compare; pick a
+  winner once you have comparison numbers and drop the other. Don't ship both.
+  BioMistral-7B is excluded from Phase 5 and the production/default serving path.
 - **Avoid MahmoodLab models** (UNI2-h, CONCH) — they hard-block personal email
   domains at the access-request stage.
 - **No monetization** — learning project. Keep attribution to underlying
@@ -103,7 +104,7 @@ models/
     path-foundation/    # selected pipeline backbone
   llm/
     openbiollm-llama3-8b.Q5_K_M.gguf
-    BioMistral-7B.Q5_K_M.gguf
+    medgemma-1.5-4b-it-Q5_K_M.gguf
   embed/
     pubmedbert/         # BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext
 ```
@@ -118,8 +119,8 @@ dataset's layout. Phase 1 uses folds 1+2 to train, fold 3 to test.
   `/v1/chat/completions` round-trip with real token/sec numbers).
 - Data on disk: PanNuke (fold1/2/3, each with `images.npy`/`masks.npy`/`types.npy`),
   TXL-PBC (cloned), Munich AML (downloaded via Kaggle mirror).
-- Models on disk: OpenBioLLM-8B and BioMistral-7B (GGUF), Virchow, path-foundation,
-  PubMedBERT.
+- Models on disk: OpenBioLLM-8B and MedGemma 1.5 4B Q5_K_M (GGUF), Virchow,
+  path-foundation, PubMedBERT.
 
 ## Verify model download status before starting a phase
 

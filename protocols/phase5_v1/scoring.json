@@ -1,0 +1,15 @@
+{
+  "fidelity_metrics": [
+    "valid_structured_response_rate",
+    "required_structured_finding_recall",
+    "required_go_term_recall",
+    "evidence_reference_precision",
+    "unsupported_finding_count",
+    "hallucinated_go_id_count",
+    "diagnostic_treatment_overreach",
+    "uncertainty_and_abstention_correctness",
+    "normalized_repeatability"
+  ],
+  "performance_metrics": ["p50_latency_ms", "p95_latency_ms", "tokens_per_second"],
+  "performance_rule": "Latency and throughput are reported separately from fidelity and never compensate for grounding failures."
+}

@@ -41,15 +41,16 @@ before `just models-vision` will pull anything. Virchow and path-foundation
 both approve fast (Virchow works fine with a personal email; avoid
 MahmoodLab's models like UNI2-h/CONCH for this pipeline unless you have an
 institutional email on your HF account — they hard-block @gmail/@hotmail/@qq
-outright). OpenBioLLM and BioMistral's GGUF mirrors are ungated entirely.
+outright). OpenBioLLM's GGUF mirror is ungated; the MedGemma GGUF is acquired
+by the pinned recipe described below.
 
 ## 3. Pull everything
 
 ```
-just models-llm      # OpenBioLLM-8B + BioMistral-7B, GGUF, for the synthesis stage
+just models-llm      # OpenBioLLM-8B + MedGemma 1.5 4B Q5_K_M, GGUF, for synthesis
 just models-vision    # Virchow + path-foundation, frozen ViT backbones for the vision stage
 just models-embed     # PubMedBERT, for the knowledge-retrieval embeddings
-just models-future-acquire  # pinned MedCPT + MedGemma future candidates
+just models-future-acquire  # pinned MedCPT + MedGemma acquisition
 just models-future-verify    # offline MedCPT + ephemeral llama.cpp checks
 just data-blood       # clones TXL-PBC (PBC + Raabin-WBC, YOLO-labeled, no account needed)
 just data-tissue      # PanNuke — the one dataset here with no auth wall
@@ -98,13 +99,14 @@ on top. Given that head is small (frozen encoder, you're only training a
 thin layer), CPU is a legitimate fallback if the gfx1032 override gives you
 grief — worth trying before sinking time into it.
 
-## Future retrieval/synthesis candidates
+## Pinned retrieval/synthesis model acquisition
 
-The future-model acquisition recipe resolves immutable Hugging Face commits,
-downloads only MedCPT safetensors plus offline metadata/tokenizers, and the
-single requested MedGemma Q5_K_M GGUF. It is idempotent and resumable; rerun
-after interruption. Use --update on scripts/acquire_future_models.py only when
-intentionally changing revisions. The verification recipe disables network for
-MedCPT, runs its paired retrieval smoke test, then starts and stops a local
-llama.cpp process at context 8192 for one text-only generation. These are
-future candidates only and do not replace selected models.
+The model-acquisition recipe resolves immutable Hugging Face commits, downloads
+only MedCPT safetensors plus offline metadata/tokenizers, and the MedGemma
+Q5_K_M GGUF. It is idempotent and resumable; rerun after interruption. Use
+--update on scripts/acquire_future_models.py only when intentionally changing
+revisions. The verification recipe disables network for MedCPT, runs its paired
+retrieval smoke test, then starts and stops a local llama.cpp process at context
+8192 for one text-only generation. MedCPT remains a future retrieval candidate;
+MedGemma is the Phase 5 synthesis candidate paired with OpenBioLLM pending the
+comparison, so neither model is a selected production winner yet.
