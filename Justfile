@@ -96,3 +96,10 @@ synthesize-phase5 packet out:
 # Guarded final acceptance (preconditions check only shows readiness).
 final-preconditions:
     /tmp/run_python.sh scripts/phase5_final.py preconditions
+
+# --- phase 6 ---------------------------------------------------------------
+
+# Local dashboard (loopback-only, offline). Run `just serve-llm` first
+# in another shell if note generation is needed.
+serve-dashboard port="8081":
+    /tmp/run_python.sh scripts/phase6_server.py --port {{port}}

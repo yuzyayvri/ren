@@ -89,6 +89,18 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 If that round-trips, the Vulkan build is working and every later stage that
 talks to `llama-server` over HTTP has something to talk to.
 
+## 5. Open the local dashboard
+
+```
+just serve-dashboard
+```
+
+This serves the Phase 6 workstation loopback-only (default
+`http://127.0.0.1:8081`, override with `just serve-dashboard 8090`).
+Keep `just serve-llm` running in another shell if you want note
+generation; everything else, including specimen viewing, overlays,
+retrieval, and review, works without it.
+
 ## Why two backends at all
 
 Vulkan handles every GGUF/llama.cpp model in the pipeline — no ROCm, no gfx
