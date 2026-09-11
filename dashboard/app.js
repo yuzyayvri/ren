@@ -32,6 +32,11 @@ function draw() {
   ctx.imageSmoothingEnabled = s < 2;
   ctx.drawImage(S.img, ox, oy, w, h);
   if (S.showOverlay && S.overlayImg?.width) ctx.drawImage(S.overlayImg, ox, oy, w, h);
+  if (S.highlight) {
+    const [x0, y0, x1, y1] = S.highlight;
+    ctx.strokeStyle = "rgba(127,166,201,1)"; ctx.lineWidth = 2.5;
+    ctx.strokeRect(ox + x0 * s, oy + y0 * s, (x1 - x0) * s, (y1 - y0) * s);
+  }
   if (S.showOverlay) {
     ctx.strokeStyle = "rgba(230,57,70,0.9)"; ctx.lineWidth = 1.2;
     for (const b of S.boxes) {
@@ -103,7 +108,10 @@ async function loadIndex(i) {
   S.img = await new Promise((res, rej) => {
     const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = S.imgURL;
   });
-  S.overlayImg = null; S.boxes = []; S.instances = [];
+  S.overlayImg = null; S.boxes = []; S.instances = []; S.highlight = null;
+  S.isV1 = /^[0-9a-f]{12}$/.test(spec.id);
+  $("analyze").style.display = S.isV1 ? "" : "none";
+  $("import-note").textContent = "";
   try {
     const ov = await api(`/api/specimens/${spec.id}/overlays`);
     if (ov.overlay_url) {
@@ -126,6 +134,45 @@ function renderFindings(counts) {
     ? `<table>${rows.map(([k, n]) => `<tr><td>${k}</td><td class="num">${n}</td></tr>`).join("")}</table>`
     : `<span class="dim">no overlay findings for this specimen</span>`;
   el.dataset.counts = JSON.stringify(counts);
+  if (S.isV1) loadV1Findings();
+}
+async function loadV1Findings() {
+  const id = S.specimens[S.index].id;
+  const el = $("findings");
+  try {
+    const r = await api(`/api/v1/findings/${id}`);
+    el.innerHTML = r.findings.map((f) =>
+      `<div class="ev" data-fid="${f.finding_id}">
+        <span class="mono">${f.finding_id}</span> <b>${f.label}</b>
+        <span class="dim">${Math.round((f.confidence || 0) * 100)}% · ${f.review_state}</span><br>
+        <button class="action" data-act="confirm" data-fid="${f.finding_id}">confirm</button>
+        <button class="action" data-act="reject" data-fid="${f.finding_id}">reject</button>
+      </div>`).join("") || `<span class="dim">no findings</span>`;
+    el.querySelectorAll("button[data-act]").forEach((b) => b.addEventListener("click", async () => {
+      await api(`/api/v1/reviews`, {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({specimen_id: id, finding_id: b.dataset.fid, action: b.dataset.act, reviewer: "workstation"})});
+      loadV1Findings(); loadIndex(S.index);
+    }));
+  } catch (e) {
+    el.innerHTML += `<div><button class="action primary" id="analyze-btn">analyze specimen</button>
+      <span class="dim">${e.message}</span></div>`;
+    const btn = $("analyze-btn");
+    if (btn) btn.addEventListener("click", analyzeSpecimen);
+  }
+}
+async function analyzeSpecimen() {
+  const id = S.specimens[S.index].id;
+  $("st-job").textContent = "analyzing…";
+  const {job_id} = await api(`/api/v1/analyze/${id}`, {method: "POST"});
+  const timer = setInterval(async () => {
+    const j = await api(`/api/jobs/${job_id}`);
+    $("st-job").textContent = `analyze: ${j.state}`;
+    if (j.state === "done" || j.state === "failed" || j.state === "cancelled") {
+      clearInterval(timer);
+      if (j.state === "done") loadIndex(S.index);
+      else $("st-job").textContent = `analyze failed: ${j.error || ""}`;
+    }
+  }, 1500);
 }
 function toggleOverlay() {
   S.showOverlay = !S.showOverlay;
@@ -135,6 +182,22 @@ function toggleOverlay() {
 document.querySelectorAll("section h2").forEach((h) =>
   h.addEventListener("click", () => h.parentElement.classList.toggle("collapsed")));
 
+$("import-btn").addEventListener("click", () => $("import-file").click());
+$("import-file").addEventListener("change", async () => {
+  const file = $("import-file").files[0];
+  if (!file) return;
+  const form = new FormData();
+  form.append("file", file);
+  try {
+    const r = await (await fetch("/api/specimens/import", {method: "POST", body: form})).json();
+    if (!r.specimen_id) throw new Error(r.detail || "rejected");
+    $("import-note").textContent = `imported ${r.specimen_id}`;
+    await loadSpecimens();
+    const at = S.specimens.findIndex((s) => s.id === r.specimen_id);
+    if (at >= 0) { $("specimens").value = at; loadIndex(at); }
+  } catch (e) { $("import-note").textContent = `import failed`; }
+});
+$("analyze").addEventListener("click", analyzeSpecimen);
 $("retrieve").addEventListener("click", async () => {
   const q = $("query").value.trim();
   if (!q) return;
@@ -151,7 +214,35 @@ $("retrieve").addEventListener("click", async () => {
       `<div class="dim">mode ${r.mode}; rank order preserved</div>`;
   } catch (e) { $("evidence").innerHTML = `<span class="bad">retrieval failed: ${e.message}</span>`; }
 });
+async function v1RetrieveAll() {
+  const id = S.specimens[S.index].id;
+  const r = await api(`/api/v1/retrieve/${id}`, {method: "POST"});
+  $("evidence").innerHTML =
+    `<div class="dim">automatic derivation (v1-query-derivation-v1), ${r.evidence} items</div>` +
+    Object.entries(r.sets || {}).map(([fid, g]) =>
+      `<div class="ev"><span class="mono">${fid}</span> <span class="dim">query: ${g.query}</span><br>` +
+      g.evidence.map((e) => `<span class="mono">${e.evidence_id}</span> ${e.go_id} <span class="dim">[auto]</span>`).join("<br>") +
+      `</div>`).join("");
+}
+async function v1Synthesize() {
+  const id = S.specimens[S.index].id;
+  const {job_id} = await api(`/api/v1/synthesize/${id}`, {method: "POST"});
+  clearInterval(S.jobTimer);
+  S.jobTimer = setInterval(async () => {
+    const j = await api(`/api/jobs/${job_id}`);
+    $("job").textContent = `${j.state} (${Math.round((j.progress || 0) * 100)}%)`;
+    if (j.state === "done" || j.state === "failed" || j.state === "cancelled") {
+      clearInterval(S.jobTimer);
+      if (j.state === "done") {
+        S.note = j.result.note; S.validated = j.result.validated;
+        $("note").textContent = j.result.note;
+        $("note").classList.add("provisional");
+      } else $("job").textContent = `${j.state}: ${j.error || ""}`;
+    }
+  }, 1500);
+}
 $("synthesize").addEventListener("click", async () => {
+  if (S.isV1) { v1RetrieveAll().then(v1Synthesize).catch((e) => { $("job").textContent = `v1 failed: ${e.message}`; }); return; }
   const counts = JSON.parse($("findings").dataset.counts || "{}");
   const labels = Object.entries(counts).filter(([, n]) => n > 0)
     .map(([k]) => (S.boxCodes && S.boxCodes[k]) || k);
@@ -201,7 +292,36 @@ document.querySelectorAll("#sec-review [data-verdict]").forEach((b) =>
     const counts = JSON.parse($("findings").dataset.counts || "{}");
     review(b.dataset.verdict, {specimen: S.specimens[S.index]?.id, findings: counts}, null);
   }));
-$("signoff").addEventListener("click", () => {
+$("note").addEventListener("click", (e) => {
+  const line = e.target.closest ? e.target.textContent : "";
+  const match = /\[(C\d+)\]/.exec(e.target.textContent || "");
+  if (!match || !S.validated) return;
+  const claim = (S.validated.claims || []).find((c) => c.claim_id === match[1]);
+  if (!claim || !claim.finding_ids.length) return;
+  const box = S.boxes.find((b) => b.finding_id === claim.finding_ids[0]);
+  if (box && box.bbox) { S.highlight = box.bbox; draw(); }
+});
+$("export-btn").addEventListener("click", async () => {
+  if (!S.isV1) { $("review-out").textContent = "export covers v1 specimens"; return; }
+  const id = S.specimens[S.index].id;
+  const blob = await api(`/api/v1/export/${id}`);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url; link.download = `${id}-export.json`; link.click();
+  URL.revokeObjectURL(url);
+  $("review-out").textContent = "export downloaded";
+});
+$("signoff").addEventListener("click", async () => {
+  if (S.isV1) {
+    const id = S.specimens[S.index].id;
+    try {
+      await api(`/api/v1/signoff/${id}`, {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({reviewer: "workstation"})});
+      $("review-out").textContent = "signed off";
+    } catch (e) { $("review-out").textContent = `sign-off failed: ${e.message}`; }
+    return;
+  }
   if (!S.note) { $("review-out").textContent = "no note to sign off"; return; }
   review("accept", {kind: "note", packet: S.packet,
     note_sha256: "(see synthesis record)"}, "human sign-off from workstation");

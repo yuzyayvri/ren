@@ -319,6 +319,11 @@ local LLM.
   repeats all pass with identical repeats; human review accepted.
   Phase 5 complete.
 
+- **Ren v1.0.0 (2026-09-11)**: blood-smear product path complete —
+  ingestion, live vision, finding review, automatic retrieval, frozen
+  synthesis, sign-off/export, dashboard workflow, full acceptance green.
+  Tissue production inference and WSI remain post-v1 research.
+
 ## Phase 6 — Dashboard / UI
 
 Goal: FastAPI backend + minimal frontend, human-in-the-loop review as a

@@ -27,7 +27,7 @@ if str(ROOT) not in sys.path:
 PROTO = ROOT / "protocols" / "phase5_v1"
 OUT = ROOT / "artifacts" / "phase5_comparison_v1"
 OUT2 = ROOT / "artifacts" / "phase5_comparison_v2"
-PROTOCOLS = ('phase5_v1', 'phase5_v2')
+PROTOCOLS = ('phase5_v1', 'phase5_v2', 'phase5_v3')
 
 REPEATS = 3
 TIMEOUT_S = 600.0
@@ -311,7 +311,8 @@ def select(aggregates: dict[str, dict[str, Any]],
 
 def append_lifecycle(event: str, extra: dict[str, Any],
                      ledger: Path | None = None) -> dict[str, Any]:
-    if event not in ("part1_superseded", "phase5_v2_frozen", "part2_selected", "part2_stopped"):
+    if event not in ("part1_superseded", "phase5_v2_frozen", "phase5_v2_superseded",
+                         "phase5_v3_frozen", "part2_selected", "part2_stopped"):
         raise ComparisonError(f"illegal lifecycle event: {event}")
     ledger = ledger or PROTO / "lifecycle.jsonl"
     entry = {"event": event, **extra}
@@ -360,7 +361,9 @@ def smoke(model: dict[str, Any], proto: str = "phase5_v2",
     out = out_root or OUT2
     if not out.is_absolute():
         out = ROOT / out
-    fixture_path = fixture_path or protocol_dir(proto) / "smoke_packet.json"
+    # The synthetic fixture is protocol-independent mechanism-test input;
+    # it lives once, frozen, in the v2 boundary.
+    fixture_path = fixture_path or ROOT / "protocols" / "phase5_v2" / "smoke_packet.json"
     fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
     if fixture.get("selection_eligible", True):
         raise ComparisonError("smoke fixture must be selection-ineligible")

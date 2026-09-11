@@ -103,3 +103,20 @@ final-preconditions:
 # in another shell if note generation is needed.
 serve-dashboard port="8081":
     /tmp/run_python.sh scripts/phase6_server.py --port {{port}}
+
+# --- v1 ----------------------------------------------------------------------
+
+# v1 blood-smear product path. Vision steps need scripts/vision_python.sh
+# (GL/X11 libs for the detector runtime); synthesis needs serve-llm running.
+
+# Import a blood-smear still into the v1 specimen registry.
+v1-ingest image:
+    /tmp/run_python.sh scripts/v1_ingest.py {{image}}
+
+# Run production vision on a registered specimen (vision stack).
+v1-analyze specimen:
+    scripts/vision_python.sh scripts/v1_vision.py --specimen {{specimen}}
+
+# Full v1 acceptance on unseen specimens (needs serve-llm running).
+v1-accept *images:
+    scripts/vision_python.sh scripts/v1_accept.py --images {{images}}

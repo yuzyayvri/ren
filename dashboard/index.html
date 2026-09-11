@@ -12,6 +12,11 @@
   <select id="specimens" title="Specimen"></select>
   <button id="next" title="Next specimen (.)">&gt;</button>
   <span id="specimen-label"></span>
+  <button id="import-btn" title="Import blood-smear PNG/JPEG">import</button>
+  <input type="file" id="import-file" accept=".png,.jpg,.jpeg" style="display:none">
+  <button id="analyze" style="display:none" title="Run production vision">analyze</button>
+  <button id="export-btn" title="Download signed export bundle">export</button>
+  <span id="import-note" class="dim"></span>
   <button id="overlay-toggle" title="Toggle overlays (o)">overlays: on</button>
   <span style="flex:1"></span>
   <span id="server-dot" class="dot bad" title="synthesis server"></span>

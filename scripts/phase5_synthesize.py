@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-PROTO = ROOT / "protocols" / "phase5_v2"
+PROTO = ROOT / "protocols" / "phase5_v3"
 V1 = ROOT / "protocols" / "phase5_v1"
 OUT = ROOT / "artifacts" / "phase5_synthesis"
 WINNER = "medgemma-1.5-4b-it"
@@ -151,6 +151,7 @@ def synthesize_packet(packet: dict[str, Any], base_url: str,
     started = time.monotonic()
     result: dict[str, Any] = {
         "schema": "phase5-production-v1",
+        "packet": packet,
         "model": {"name": model["name"], "filename": model["filename"],
                   "sha256": model["sha256"]},
         "prompt_sha256": sha256_bytes(system_prompt.encode()),

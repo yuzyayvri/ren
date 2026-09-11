@@ -1,0 +1,17 @@
+{
+  "files": {
+    "decoding.json": "2fca203660e316795f875ac820acfa243a1005f2c21a34cdd62ac7e7bc4328a9",
+    "prompt.md": "c18e70274986e79eb2db02b558454ca05887d0719245a08cc37b883794a774c6"
+  },
+  "references": {
+    "freeze_manifest.json": "8f3d01fcf58315047c736d7f4504aaf7692e517e151e65ee6ed68bdf77cd3995",
+    "prompt.md": "c18e70274986e79eb2db02b558454ca05887d0719245a08cc37b883794a774c6",
+    "response_schema.json": "9d6f96153b2aef7b092896e4570d23822ebc1e6e2e553fbdb2d2ea631d3dbfd5",
+    "smoke_packet.json": "f24d89ac4cff56d8fcd1600d756eef379f7ec10d98f4b1007596d2bbcc777759"
+  },
+  "schema": "phase5-freeze-v3",
+  "status": "frozen_v3_no_candidate_output",
+  "supersedes": {
+    "phase5_freeze_v2_manifest_sha256": "8f3d01fcf58315047c736d7f4504aaf7692e517e151e65ee6ed68bdf77cd3995"
+  }
+}
