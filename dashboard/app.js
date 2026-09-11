@@ -78,8 +78,6 @@ async function loadSpecimens() {
   S.specimens = await api("/api/specimens?limit=200");
   const sel = $("specimens");
   sel.innerHTML = "";
-  // seed a few pannuke patches alongside blood smears
-  for (let i = 0; i < 12; i++) S.specimens.push({id: `pannuke-f3-${i}`, kind: "tissue-patch", source: "pannuke", name: `fold3 patch ${i}`});
   S.specimens.forEach((s, i) => {
     const o = document.createElement("option");
     o.value = i; o.textContent = `${s.source}: ${s.name}`;
@@ -88,6 +86,9 @@ async function loadSpecimens() {
   sel.onchange = () => loadIndex(+sel.value);
   loadIndex(0);
 }
+$("prev").addEventListener("click", () => step(-1));
+$("next").addEventListener("click", () => step(1));
+$("overlay-toggle").addEventListener("click", toggleOverlay);
 function step(d) {
   const n = (S.index + d + S.specimens.length) % S.specimens.length;
   $("specimens").value = n; loadIndex(n);
@@ -112,6 +113,8 @@ async function loadIndex(i) {
       });
     }
     S.boxes = ov.boxes || []; S.instances = ov.instances || [];
+  S.boxCodes = {};
+  for (const b of S.boxes) S.boxCodes[b.label] = b.code || b.label;
     renderFindings(ov.counts || {});
   } catch { renderFindings({}); }
   fitView();
@@ -150,7 +153,8 @@ $("retrieve").addEventListener("click", async () => {
 });
 $("synthesize").addEventListener("click", async () => {
   const counts = JSON.parse($("findings").dataset.counts || "{}");
-  const labels = Object.entries(counts).filter(([, n]) => n > 0).map(([k]) => k);
+  const labels = Object.entries(counts).filter(([, n]) => n > 0)
+    .map(([k]) => (S.boxCodes && S.boxCodes[k]) || k);
   if (!labels.length) { $("job").textContent = "no findings to synthesize"; return; }
   const entries = S.lastRetrieval?.entries || [];
   const checked = [...document.querySelectorAll("#evidence input:checked")]
