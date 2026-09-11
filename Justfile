@@ -68,3 +68,12 @@ freeze-phase5:
 # Verify the frozen Part 1 protocol without running any LLM.
 verify-phase5:
     /tmp/run_python.sh scripts/phase5_protocol.py verify
+
+# Run the Part 2 candidate comparison (hours, unattended). Serves each
+# candidate once, preserves every generation. Human review follows.
+compare-phase5:
+    /tmp/run_python.sh scripts/phase5_compare.py run --all
+
+# Aggregate saved comparison runs without touching any server.
+score-phase5:
+    /tmp/run_python.sh scripts/phase5_compare.py score

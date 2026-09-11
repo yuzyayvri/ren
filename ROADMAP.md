@@ -308,6 +308,10 @@ local LLM.
   correct GO terms), the synthesized note correctly reflects both — no
   hallucinated findings not present in the structured input.
 
+- **Part 2 stop (2026-09-11)**: OpenBioLLM vs MedGemma, 24 dev generations
+  each, valid structured-response rate 0.0 both. No winner selected and no
+  gates weakened. Part 3 awaits a prompt/decoding re-freeze decision.
+
 ## Phase 6 — Dashboard / UI
 
 Goal: FastAPI backend + minimal frontend, human-in-the-loop review as a
