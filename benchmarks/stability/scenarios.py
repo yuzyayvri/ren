@@ -229,11 +229,16 @@ def register(B, IMG):
         await prepared_v1(b)
         n0 = await b.findings_count()
         await b.scroll_findings(600)
-        y0 = await b.page.evaluate("document.querySelector('#side').scrollTop")
         btn = b.page.locator("#findings button[data-act='confirm']").first
         nb = await btn.count()
         if nb == 0:
             return [check("skipped-no-targets", True, "")]
+        # Bring the row into view first, exactly as a user would: this keeps
+        # the driver's own scroll out of the measurement so the assertion
+        # covers the app's re-render behavior only.
+        await btn.scroll_into_view_if_needed()
+        await b.page.wait_for_timeout(400)
+        y0 = await b.page.evaluate("document.querySelector('#side').scrollTop")
         await btn.click()
         await b.page.wait_for_timeout(2000)
         y1 = await b.page.evaluate("document.querySelector('#side').scrollTop")
@@ -249,6 +254,9 @@ def register(B, IMG):
         btns = b.page.locator("#findings button[data-act='reject']")
         if await btns.count() == 0:
             return [check("skipped-no-targets", True, "")]
+        await btns.first.scroll_into_view_if_needed()
+        await b.page.wait_for_timeout(400)
+        y0 = await b.page.evaluate("document.querySelector('#side').scrollTop")
         await btns.first.click()
         await b.page.wait_for_timeout(2000)
         y1 = await b.page.evaluate("document.querySelector('#side').scrollTop")
