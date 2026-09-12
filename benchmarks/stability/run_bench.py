@@ -203,18 +203,35 @@ def main() -> int:
                     _txl = sorted((ROOT / "data/blood/txl-pbc/TXL-PBC/images/val").glob("*.png"))
                     if len(_txl) < 3:
                         raise RuntimeError("benchmark needs at least three TXL validation images")
-                    _seed = sum(run_tag.encode()) % 251
-                    for _key, _src in (("txl_real", _txl[1]), ("txl_real2", _txl[2]),
-                                       ("txl_review", _txl[1]), ("txl_reject", _txl[2]),
-                                       ("txl_mode", _txl[1]), ("txl_bulk", _txl[2]),
-                                       ("txl_double", _txl[1]), ("txl_async", _txl[2])):
+                    _fixture_keys = (
+                        "txl_v01", "txl_v03", "txl_v04", "txl_v05",
+                        "txl_review", "txl_reject", "txl_mode", "txl_bulk",
+                        "txl_f05", "txl_f07", "txl_f08", "txl_double",
+                        "txl_r01", "txl_r02", "txl_r03", "txl_r04", "txl_r05",
+                        "txl_r06", "txl_r07", "txl_e01", "txl_e02", "txl_e03",
+                        "txl_e04", "txl_y01", "txl_y02", "txl_y03", "txl_y04",
+                        "txl_y05", "txl_y06", "txl_y07", "txl_p01", "txl_p02",
+                        "txl_p03", "txl_p04", "txl_w01", "txl_w03", "txl_w04",
+                        "txl_w05", "txl_async", "txl_a02", "txl_a03",
+                        "txl_t01", "txl_t02",
+                    )
+                    for _key in _fixture_keys:
+                        _src = _txl[1 + (sum(_key.encode()) % 2)]
                         _img = _Image.open(_src).convert("RGB")
                         _px = _img.load()
-                        _key_seed = (_seed + sum(_key.encode())) % 251
-                        _px[0, 0] = (_key_seed, (_key_seed * 7) % 256, (_key_seed * 13) % 256)
+                        # Encode the run and fixture key into a short pixel
+                        # marker.  A single hash byte is not enough to prove
+                        # isolation when many scenarios share source images;
+                        # the marker makes each fixture's content distinct.
+                        _marker = f"{run_tag}:{_key}".encode("ascii")
+                        for _i, _byte in enumerate(_marker):
+                            _x, _y = _i % _img.width, _i // _img.width
+                            _r, _g, _b = _px[_x, _y]
+                            _px[_x, _y] = (_byte, (_g + _i) % 256, (_b + _byte) % 256)
                         _dst = tmp / f"{_key}.png"
                         _img.save(_dst)
                         imgs[_key] = _dst
+                    context["fixture_keys"] = list(_fixture_keys)
                     page = await browser.new_page(viewport={"width": 1440, "height": 900})
                     hosts: set[str] = set()
 
@@ -225,8 +242,35 @@ def main() -> int:
                             pass
 
                     page.on("request", _track)
+
+                    async def _restart_backend() -> dict[str, Any]:
+                        nonlocal backend
+                        old = backend
+                        if old is None:
+                            raise RuntimeError("benchmark backend is not running")
+                        old_pid = old.pid
+                        if old.poll() is None:
+                            old.terminate()
+                        try:
+                            old.wait(timeout=30)
+                        except subprocess.TimeoutExpired:
+                            old.kill()
+                            old.wait(timeout=10)
+                        if not _wait_port_free(UI_PORT):
+                            raise RuntimeError("dashboard port remained occupied during backend restart")
+                        backend = subprocess.Popen(
+                            [str(ROOT / "scripts" / "vision_python.sh"), "-m", "uvicorn",
+                             "scripts.phase6_server:create_app", "--factory",
+                             "--host", "127.0.0.1", "--port", str(UI_PORT)],
+                            cwd=str(ROOT), stdout=backend_log_handle, stderr=subprocess.STDOUT)
+                        if not wait_http(f"http://127.0.0.1:{UI_PORT}/api/health"):
+                            raise RuntimeError("backend failed to restart; see run-scoped backend.log")
+                        return {"old_pid": old_pid, "old_exit_code": old.returncode,
+                                "new_pid": backend.pid, "ready": True}
+
                     local_bench = Bench(page, f"http://127.0.0.1:{UI_PORT}",
-                                        artifact_dir=run_dir, backend_log=run_dir / "backend.log")
+                                        artifact_dir=run_dir, backend_log=run_dir / "backend.log",
+                                        backend_restart=_restart_backend)
                     local_bench.hosts = hosts
                     register(local_bench, imgs)
                     only = os.environ.get("BENCH_ONLY", "")

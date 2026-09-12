@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Any, Awaitable, Callable
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "artifacts" / "benchmark_results" / "stability"
@@ -33,6 +34,7 @@ class Ctx:
         self.failed_requests: list[str] = []
         self.expected_failed_requests: set[str] = set()
         self.unexpected_failed_requests: list[str] = []
+        self.fixture_bindings: list[dict[str, str]] = []
         page.on("console", lambda m: self.console_errors.append(m.text) if m.type == "error" else None)
         page.on("pageerror", lambda e: self.console_errors.append(str(e)))
         page.on("requestfailed", lambda r: self.failed_requests.append(f"{r.method} {r.url}"))
@@ -43,6 +45,9 @@ class Ctx:
 
     def expect_failed_request(self, url_fragment: str) -> None:
         self.expected_failed_requests.add(url_fragment)
+
+    def bind_fixture(self, key: str, specimen_id: str) -> None:
+        self.fixture_bindings.append({"key": key, "specimen_id": specimen_id})
 
 
 def check(name, ok, detail=""):
@@ -105,7 +110,8 @@ async def import_file(page, path: Path):
 
 class Bench:
     def __init__(self, page, base_url, *, artifact_dir: Path | None = None,
-                 backend_log: Path | None = None):
+                 backend_log: Path | None = None,
+                 backend_restart: Callable[[], Awaitable[dict[str, Any]]] | None = None):
         self.page = page
         self.base_url = base_url
         self.hosts: set = set()
@@ -114,6 +120,12 @@ class Bench:
         self.artifact_dir = artifact_dir or RESULTS
         self.shots_dir = self.artifact_dir / "shots"
         self.backend_log = backend_log or (self.artifact_dir / "backend.log")
+        self._backend_restart = backend_restart
+
+    async def restart_backend(self) -> dict[str, Any]:
+        if self._backend_restart is None:
+            raise RuntimeError("benchmark backend restart hook is unavailable")
+        return await self._backend_restart()
 
     def scenario(self, sid, cat, weight):
         def deco(fn):
@@ -161,6 +173,7 @@ class Bench:
             err0 = len(self.ctx.console_errors)
             req0 = len(self.ctx.failed_requests)
             bad0 = len(self.ctx.bad_responses)
+            fixture0 = len(self.ctx.fixture_bindings)
             self.ctx.expected_failed_requests = set()
             screenshot = None
             try:
@@ -209,7 +222,8 @@ class Bench:
                         "new_failed_requests": new_failed_requests,
                         "expected_failed_requests": expected_failed_requests,
                         "unexpected_failed_requests": unexpected_failed_requests,
-                        "new_bad_responses": self.ctx.bad_responses[bad0:]}
+                        "new_bad_responses": self.ctx.bad_responses[bad0:],
+                        "fixture_bindings": self.ctx.fixture_bindings[fixture0:]}
             if screenshot is not None:
                 scenario["screenshot"] = screenshot
             results.append(scenario)
