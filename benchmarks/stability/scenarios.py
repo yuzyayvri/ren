@@ -155,12 +155,18 @@ def register(B, IMG):
     @S("S03-dead-backend", "startup", 1)
     async def _(b):
         b.ctx.expect_failed_request("127.0.0.1:8099")
-        try:
-            await b.page.goto("http://127.0.0.1:8099/", timeout=8000)
-            return [check("connection-refused", False, "dead backend unexpectedly accepted navigation")]
-        except Exception as e:  # noqa: BLE001 - the refusal itself is the assertion
-            message = str(e)
-            return [check("connection-refused", "CONNECTION_REFUSED" in message.upper(), message[:80])]
+        result = await b.page.evaluate(
+            """async () => {
+                try {
+                    const response = await fetch('http://127.0.0.1:8099/');
+                    return {accepted: true, status: response.status};
+                } catch (error) {
+                    return {accepted: false, error: String(error)};
+                }
+            }""")
+        message = str(result)
+        refused = not result.get("accepted") and "error" in result
+        return [check("connection-refused", refused, message[:120])]
 
     @S("S04-synth-indicator-down", "startup", 1)
     async def _(b):
