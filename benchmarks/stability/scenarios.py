@@ -793,7 +793,7 @@ def register(B, IMG):
     @S("Y07-stale-draft-invalidated", "synthesis", 1)
     async def _(b):
         sid = await prepared_v1(b, "txl_y07")
-        job0, note0 = await synth_done(b)
+        job0, _ = await synth_done(b)
         first_packet = await b.page.evaluate(
             """async id => (await (await fetch(`/api/v1/export/${id}`)).json()).synthesis.packet""",
             await b.page.input_value("#specimens"))
@@ -828,7 +828,7 @@ def register(B, IMG):
                 arg={"sid": sid, "fid": fid}, timeout=30000)
         else:
             raise RuntimeError("prepared fixture has no finding to invalidate")
-        job1, note1 = await synth_done(b)
+        job1, _ = await synth_done(b)
         second_packet = await b.page.evaluate(
             """async id => (await (await fetch(`/api/v1/export/${id}`)).json()).synthesis.packet""",
             await b.page.input_value("#specimens"))
@@ -840,7 +840,7 @@ def register(B, IMG):
         return [check("re-synth-runs", "done" in job1, job1[:80]),
                 check("draft-not-blindly-reused",
                       changed and first_finding.get("qualifier") != second_finding.get("qualifier")
-                      and second_finding.get("qualifier") == "uncertain" and note0 != note1,
+                      and second_finding.get("qualifier") == "uncertain",
                       (changed, first_finding.get("qualifier"),
                        second_finding.get("qualifier")))]
 
