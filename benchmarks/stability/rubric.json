@@ -1,0 +1,20 @@
+{
+  "total_points": 100,
+  "rule": "Each scenario has ordered checks sharing its weight equally. A scenario scores 0 on crash/hang/timeout. Partial credit applies per check, never by reweighting after results.",
+  "categories": [
+    {"id": "startup", "weight": 6, "why": "Nothing else runs without a healthy launch."},
+    {"id": "import", "weight": 10, "why": "Primary v1 entry point; must reject safely."},
+    {"id": "vision", "weight": 10, "why": "Core machine analysis must be stable."},
+    {"id": "findings", "weight": 12, "why": "Reviewer spends most time here; state bugs bite hardest."},
+    {"id": "retrieval", "weight": 12, "why": "The v1 grounding joint; must work without typing."},
+    {"id": "evidence", "weight": 6, "why": "Selection integrity feeds synthesis."},
+    {"id": "synthesis", "weight": 10, "why": "Flagship output; failures must be clean."},
+    {"id": "provenance", "weight": 6, "why": "Traceability is the product promise."},
+    {"id": "review", "weight": 8, "why": "Sign-off is the safety gate."},
+    {"id": "async", "weight": 6, "why": "Races corrupt trust silently."},
+    {"id": "recovery", "weight": 6, "why": "Failures must be recoverable and honest."},
+    {"id": "edge", "weight": 4, "why": "Adversarial inputs must not corrupt state."},
+    {"id": "offline", "weight": 2, "why": "Local-first is a release guarantee."},
+    {"id": "stability", "weight": 2, "why": "Repeats catch nondeterminism."}
+  ]
+}
