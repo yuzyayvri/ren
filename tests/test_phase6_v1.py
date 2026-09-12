@@ -369,3 +369,20 @@ def test_frontend_auto_chain_present():
     text = (ROOT / "dashboard" / "app.js").read_text()
     assert "autoRetrieveQuiet" in text
     assert "manual query remains available" in text
+
+
+def test_import_preserves_original_filename(client, tmp_path):
+    from PIL import Image
+
+    probe = tmp_path / "probe-src.png"
+    img = Image.open(ROOT / "data/blood/txl-pbc/TXL-PBC/images/val/02329f7234bd54e68632dd2eb18be58b.png").convert("RGB")
+    img.putpixel((0, 0), (7, 77, 177))
+    img.save(probe)
+    r = client.post("/api/specimens/import",
+                    files={"file": ("my-smear.png", probe.read_bytes(), "image/png")}).json()
+    try:
+        assert r["source_filename"] == "my-smear.png"
+        names = [s["name"] for s in client.get("/api/specimens?limit=500").json()]
+        assert "my-smear.png" in names
+    finally:
+        shutil.rmtree(ROOT / "artifacts" / "v1_specimens" / r["specimen_id"])

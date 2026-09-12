@@ -476,7 +476,7 @@ def create_app() -> Any:
             shutil.copyfileobj(file.file, tmp)
             tmppath = Path(tmp.name)
         try:
-            record = ingest.ingest_file(tmppath)
+            record = ingest.ingest_file(tmppath, source_filename=file.filename or "upload")
         except ingest.IngestError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         finally:
