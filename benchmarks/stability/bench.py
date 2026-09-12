@@ -69,8 +69,13 @@ async def import_file(page, path: Path):
     # Direct input assignment: identical change event and backend request as
     # the native dialog path, without dialog flakiness. The dialog opening
     # itself is covered once by G03-dialog-opens.
+    # Returns the import-note text so callers can track created specimen ids.
     await page.evaluate("() => { document.querySelector('#import-note').textContent = ''; }")
     await page.set_input_files("#import-file", str(path))
+    await page.wait_for_function(
+        "() => document.querySelector('#import-note').textContent.length > 0",
+        timeout=30000)
+    return await page.text_content("#import-note")
 
 
 class Bench:
@@ -122,6 +127,8 @@ class Bench:
         results = []
         for spec in self.scenarios:
             t0 = time.monotonic()
+            if progress_path is not None:
+                progress_path.write_text(_json.dumps({'running': spec['id'], 'done': len(results), 'of': len(self.scenarios)}) + chr(10))
             err0 = len(self.ctx.console_errors)
             try:
                 checks = await asyncio.wait_for(spec["fn"](self), timeout=per_scenario_s)

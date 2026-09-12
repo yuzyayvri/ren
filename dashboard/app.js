@@ -180,16 +180,16 @@ async function loadV1Findings() {
   const scrollTop = side ? side.scrollTop : 0;
   try {
     const r = await api(`/api/v1/findings/${id}`);
-    el.innerHTML = r.findings.map((f) =>
+    const rows = r.findings.map((f) =>
       `<div class="ev" data-fid="${f.finding_id}">
         <span class="mono">${f.finding_id}</span> <b>${f.label}</b>
         <span class="dim">${Math.round((f.confidence || 0) * 100)}% · ${f.review_state}</span><br>
         <button class="action" data-act="confirm" data-fid="${f.finding_id}">confirm</button>
         <button class="action" data-act="reject" data-fid="${f.finding_id}">reject</button>
       </div>`).join("") || `<span class="dim">no findings</span>`;
-    if (side) side.scrollTop = scrollTop;
     const unreviewed = r.findings.filter((f) => f.review_state === "unreviewed").length;
-    el.innerHTML = reviewModeBar(unreviewed) + el.innerHTML;
+    el.innerHTML = reviewModeBar(unreviewed) + rows;
+    if (side) side.scrollTop = scrollTop;
     bindReviewModeBar();
     el.querySelectorAll("button[data-act]").forEach((b) => b.addEventListener("click", async () => {
       await api(`/api/v1/reviews`, {method: "POST", headers: {"Content-Type": "application/json"},

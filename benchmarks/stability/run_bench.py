@@ -33,6 +33,8 @@ def main() -> int:
     from scenarios import register
 
     RESULTS.mkdir(parents=True, exist_ok=True)
+    regdir = ROOT / "artifacts" / "v1_specimens"
+    preexisting = {d.name for d in regdir.iterdir() if d.is_dir()} if regdir.is_dir() else set()
     for port, name in ((LLM_PORT, "MedGemma"), (UI_PORT, "dashboard")):
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=3):
@@ -95,6 +97,14 @@ def main() -> int:
 
         import asyncio
         results, runtime_s, bench = asyncio.run(_amain())
+        import shutil as _shutil
+        cleaned = 0
+        if regdir.is_dir():
+            for d in regdir.iterdir():
+                if d.is_dir() and d.name not in preexisting:
+                    _shutil.rmtree(d, ignore_errors=True)
+                    cleaned += 1
+        print(f"cleaned {cleaned} harness-imported specimens")
         cats: dict[str, dict] = {}
         for r in results:
             c = cats.setdefault(r["cat"], {"weight": 0.0, "score": 0.0, "scenarios": 0})
