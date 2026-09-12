@@ -96,7 +96,6 @@ async function loadSpecimens() {
     const at = S.specimens.findIndex((s) => s.id === sel.value);
     loadIndex(at >= 0 ? at : 0);
   };
-  loadIndex(0);
 }
 $("prev").addEventListener("click", () => step(-1));
 $("next").addEventListener("click", () => step(1));
@@ -239,8 +238,14 @@ $("import-file").addEventListener("change", async () => {
     if (!r.specimen_id) throw new Error(r.detail || "rejected");
     $("import-note").textContent = `imported ${r.specimen_id}`;
     await loadSpecimens();
-    const at = S.specimens.findIndex((s) => s.id === r.specimen_id);
+    let at = S.specimens.findIndex((s) => s.id === r.specimen_id);
+    if (at < 0) {
+      await new Promise((res) => setTimeout(res, 800));
+      await loadSpecimens();
+      at = S.specimens.findIndex((s) => s.id === r.specimen_id);
+    }
     if (at >= 0) { $("specimens").value = r.specimen_id; loadIndex(at); }
+    else { $("import-note").textContent = `imported ${r.specimen_id} (select it in the list)`; }
   } catch (e) { $("import-note").textContent = `import failed`; }
 });
 $("analyze").addEventListener("click", analyzeSpecimen);
@@ -406,5 +411,5 @@ $("server-label").addEventListener("click", async () => {
   await api(s.running ? "/api/server/stop" : "/api/server/start", {method: "POST"});
   serverStatus();
 });
-bindCanvas(); loadSpecimens(); refreshProvenance(); serverStatus();
+bindCanvas(); loadSpecimens().then(() => loadIndex(0)); refreshProvenance(); serverStatus();
 setInterval(serverStatus, 15000);

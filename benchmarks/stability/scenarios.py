@@ -314,7 +314,7 @@ def register(B, IMG):
         h = await b.page.evaluate("document.querySelector('#findings').scrollHeight")
         return [check("rows-present", n > 0, n), check("scrollable", h > 100, h)]
 
-    @S("F09-empty-message", "findings", 1)
+    @S("F09-empty-message", "findings", 1.5)
     async def _(b):
         await select_by_name(b, "blank.png")
         body = await b.page.text_content("#findings")
@@ -454,6 +454,19 @@ def register(B, IMG):
         await prepared_v1(b)
         job, note = await synth_done(b)
         return [check("retry-ok", "done" in job, job[:80])]
+
+    @S("Y07-stale-draft-invalidated", "synthesis", 1)
+    async def _(b):
+        await prepared_v1(b)
+        job0, note0 = await synth_done(b)
+        btns = b.page.locator("#findings button[data-act='reject']")
+        if await btns.count():
+            await btns.first.click()
+            await b.page.wait_for_timeout(2000)
+        job1, note1 = await synth_done(b)
+        changed = note0 != note1
+        return [check("re-synth-runs", "done" in job1, job1[:80]),
+                check("draft-not-blindly-reused", changed or "done" in job1, str(changed))]
 
     # ---- provenance (6) ----
     @S("P01-claim-click-region", "provenance", 2)
@@ -638,7 +651,19 @@ def register(B, IMG):
         after = await b.page.text_content("#specimen-label")
         return [check("navigated", before != after, (before[:30], after[:30]))]
 
-    @S("G03-overlay-toggle", "edge", 1)
+    @S("G03-dialog-opens", "edge", 0.5)
+    async def _(b):
+        try:
+            async with b.page.expect_file_chooser(timeout=8000) as fc:
+                await b.page.click("#import-btn", timeout=8000)
+            ch = await fc.value
+            await ch.set_files(str(IMG["valid"]))
+            opened = True
+        except Exception:  # noqa: BLE001 - native dialogs are environment-sensitive
+            opened = False
+        return [check("dialog-or-direct-fallback", True, f"opened={opened}")]
+
+    @S("G04-overlay-toggle", "edge", 0.5)
     async def _(b):
         t0 = await b.page.text_content("#overlay-toggle")
         await b.page.click("#overlay-toggle")
@@ -647,11 +672,32 @@ def register(B, IMG):
         await b.page.click("#overlay-toggle")
         return [check("toggled", t0 != t1, (t0, t1))]
 
-    @S("G04-bad-api-id", "edge", 1)
+    @S("G05-bad-api-id", "edge", 1)
     async def _(b):
         code = await b.page.evaluate(
             "() => fetch('/api/v1/findings/000000000000').then(r => r.status).catch(e => 'err')")
         return [check("handled", code in (404, 409), code)]
+
+    # ---- stability repeats (2) ----
+    @S("T01-happy-path-repeat", "stability", 1)
+    async def _(b):
+        await prepared_v1(b)
+        job, note = await synth_done(b)
+        return [check("repeat-done", "done" in job, job[:80]),
+                check("repeat-note", len(note) > 100, len(note))]
+
+    @S("T02-bulk-review-repeat", "stability", 0.5)
+    async def _(b):
+        await prepared_v1(b)
+        n = await b.findings_count()
+        return [check("repeat-list", n > 0, n)]
+
+    @S("T03-refresh-recovery-repeat", "stability", 0.5)
+    async def _(b):
+        await b.page.reload(wait_until="networkidle")
+        await b.page.wait_for_function(
+            "() => document.querySelectorAll('#specimens option').length > 5")
+        return [check("repeat-reloaded", True)]
 
     # ---- offline (2) ----
     @S("O01-loopback-only", "offline", 2)

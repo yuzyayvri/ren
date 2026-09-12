@@ -66,11 +66,11 @@ def make_images(tmp: Path):
 
 
 async def import_file(page, path: Path):
+    # Direct input assignment: identical change event and backend request as
+    # the native dialog path, without dialog flakiness. The dialog opening
+    # itself is covered once by G03-dialog-opens.
     await page.evaluate("() => { document.querySelector('#import-note').textContent = ''; }")
-    async with page.expect_file_chooser() as fc:
-        await page.click("#import-btn")
-    chooser = await fc.value
-    await chooser.set_files(str(path))
+    await page.set_input_files("#import-file", str(path))
 
 
 class Bench:

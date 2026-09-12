@@ -252,6 +252,13 @@ def create_app() -> Any:
     from fastapi.staticfiles import StaticFiles
 
     app = FastAPI(title="ren workstation", docs_url=None, redoc_url=None, openapi_url=None)
+
+    @app.middleware("http")
+    async def _no_store_api(request: Any, call_next: Any) -> Any:
+        response = await call_next(request)
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
     jobs: dict[str, dict[str, Any]] = {}
     lock = threading.Lock()
 
