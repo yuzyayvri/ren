@@ -123,7 +123,11 @@ def register(B, IMG):
         return sid
 
     async def synth_done(b, timeout=240000):
+        before_jobs = await b.page.evaluate("() => (S.v1JobIds || []).length")
         await b.page.click("#synthesize")
+        await b.page.wait_for_function(
+            "before => (S.v1JobIds || []).length > before || /v1 failed:/.test(document.querySelector('#job').textContent || '')",
+            arg=before_jobs, timeout=30000)
         await b.page.wait_for_function(
             "() => { const t = document.querySelector('#job').textContent || ''; return /done|failed|cancelled|v1 failed/.test(t); }",
             timeout=timeout)
@@ -794,8 +798,19 @@ def register(B, IMG):
             await b.page.input_value("#specimens"))
         btns = b.page.locator("#findings button[data-act='reject']")
         if await btns.count():
-            await btns.first.click()
-            await b.page.wait_for_timeout(2000)
+            # Keep F1 in the packet: the frozen model's deterministic response
+            # format follows the packet's contiguous finding-id sequence.
+            # Removing the last finding still changes the packet and exercises
+            # stale-draft invalidation without manufacturing an unresolvable
+            # F2..F20 sequence for the model to cite.
+            target = btns.last
+            fid = await target.get_attribute("data-fid")
+            if not fid:
+                raise RuntimeError("reject action has no finding id")
+            await target.click()
+            await b.page.wait_for_function(
+                "fid => ![...document.querySelectorAll('#findings .ev')].some(e => e.dataset.fid === fid)",
+                arg=fid, timeout=30000)
         else:
             raise RuntimeError("prepared fixture has no finding to invalidate")
         job1, note1 = await synth_done(b)
@@ -803,8 +818,10 @@ def register(B, IMG):
             """async id => (await (await fetch(`/api/v1/export/${id}`)).json()).synthesis.packet""",
             await b.page.input_value("#specimens"))
         changed = first_packet != second_packet
+        remaining_ids = {finding["finding_id"] for finding in second_packet.get("findings", [])}
         return [check("re-synth-runs", "done" in job1, job1[:80]),
-                check("draft-not-blindly-reused", changed and note0 != note1, str(changed))]
+                check("draft-not-blindly-reused", changed and fid not in remaining_ids and note0 != note1,
+                      (changed, fid, sorted(remaining_ids)))]
 
     # ---- provenance (6) ----
     @S("P01-claim-click-region", "provenance", 2)
