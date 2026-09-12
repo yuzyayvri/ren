@@ -90,3 +90,4 @@ def test_packet_context_caps_per_finding(tmp_path):
     kept = [e["go_id"] for e in context]
     assert kept[:3] == ["GO:0000001", "GO:0000002", "GO:0000003"]
     assert "GO:0006915" in kept and len(context) == 4
+    assert [e["evidence_id"] for e in context] == ["E1", "E2", "E3", "E4"]
