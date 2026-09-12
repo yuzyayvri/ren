@@ -156,14 +156,13 @@ def register(B, IMG):
     async def _(b):
         b.ctx.expect_failed_request("127.0.0.1:8099")
         result = await b.page.evaluate(
-            """async () => {
-                try {
-                    const response = await fetch('http://127.0.0.1:8099/');
-                    return {accepted: true, status: response.status};
-                } catch (error) {
-                    return {accepted: false, error: String(error)};
-                }
-            }""")
+            """() => new Promise(resolve => {
+                const probe = document.createElement('img');
+                probe.onload = () => { probe.remove(); resolve({accepted: true}); };
+                probe.onerror = () => { probe.remove(); resolve({accepted: false, error: 'resource error'}); };
+                probe.src = 'http://127.0.0.1:8099/';
+                document.body.appendChild(probe);
+            })""")
         message = str(result)
         refused = not result.get("accepted") and "error" in result
         return [check("connection-refused", refused, message[:120])]
