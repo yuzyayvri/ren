@@ -226,26 +226,30 @@ def register(B, IMG):
     @S("F01-approve-scrolled", "findings", 2)
     async def _(b):
         await b.goto_app()
-        await prepared_v1(b)
-        n0 = await b.findings_count()
-        await b.scroll_findings(600)
-        btn = b.page.locator("#findings button[data-act='confirm']").first
-        nb = await btn.count()
-        if nb == 0:
-            return [check("skipped-no-targets", True, "")]
-        # Bring the row into view first, exactly as a user would: this keeps
-        # the driver's own scroll out of the measurement so the assertion
-        # covers the app's re-render behavior only.
-        await btn.scroll_into_view_if_needed()
-        await b.page.wait_for_timeout(400)
-        y0 = await b.page.evaluate("document.querySelector('#side').scrollTop")
-        await btn.click()
-        await b.page.wait_for_timeout(2000)
-        y1 = await b.page.evaluate("document.querySelector('#side').scrollTop")
-        n1 = await b.findings_count()
-        mode = await b.page.evaluate("() => document.querySelector('#findings').innerHTML.length")
-        return [check("had-scroll", y0 > 50, (y0, y1)),
-                check("scroll-preserved", abs(y1 - y0) < 40, (y0, y1, n0, n1, mode))]
+        await b.page.set_viewport_size({"width": 1440, "height": 500})
+        try:
+            await prepared_v1(b)
+            n0 = await b.findings_count()
+            await b.scroll_findings(600)
+            btn = b.page.locator("#findings button[data-act='confirm']").first
+            nb = await btn.count()
+            if nb == 0:
+                return [check("skipped-no-targets", True, "")]
+            # Bring the row into view first, exactly as a user would: this keeps
+            # the driver's own scroll out of the measurement so the assertion
+            # covers the app's re-render behavior only.
+            await btn.scroll_into_view_if_needed()
+            await b.page.wait_for_timeout(400)
+            y0 = await b.page.evaluate("document.querySelector('#side').scrollTop")
+            await btn.click()
+            await b.page.wait_for_timeout(2000)
+            y1 = await b.page.evaluate("document.querySelector('#side').scrollTop")
+            n1 = await b.findings_count()
+            mode = await b.page.evaluate("() => document.querySelector('#findings').innerHTML.length")
+            return [check("had-scroll", y0 > 50, (y0, y1)),
+                    check("scroll-preserved", abs(y1 - y0) < 40, (y0, y1, n0, n1, mode))]
+        finally:
+            await b.page.set_viewport_size({"width": 1440, "height": 900})
 
     @S("F02-reject-scrolled", "findings", 1.5)
     async def _(b):
@@ -443,8 +447,16 @@ def register(B, IMG):
     async def _(b):
         await prepared_v1(b)
         job, note = await synth_done(b)
+        retried = False
+        if "failed: SynthesisError: synthesis transport failed" in job:
+            # One recorded retry after re-verifying server health: distinguishes
+            # a flapped server process from a systematic synthesis failure.
+            await b.page.wait_for_timeout(15000)
+            job, note = await synth_done(b)
+            retried = True
         return [check("done-again", "done" in job, job[:80]),
-                check("note-again", len(note) > 100, len(note))]
+                check("note-again", len(note) > 100, len(note)),
+                check("no-retry-needed", not retried, f"retried={retried}")]
 
     @S("Y04-double-click", "synthesis", 1)
     async def _(b):
