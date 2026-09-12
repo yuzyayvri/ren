@@ -71,7 +71,8 @@ def main() -> int:
                     imgs = make_images(tmp, tag=run_tag)
                     print(f"run tag {run_tag}: content-unique imports for isolation")
                     from PIL import Image as _Image
-                    for _key, _src in (('txl_real', txl[1]), ('txl_real2', txl[2])):
+                    _txl = sorted((ROOT / "data/blood/txl-pbc/TXL-PBC/images/val").glob("*.png"))
+                    for _key, _src in (('txl_real', _txl[1]), ('txl_real2', _txl[2])):
                         _img = _Image.open(_src).convert('RGB')
                         _px = _img.load()
                         _seed = sum(run_tag.encode()) % 251
@@ -79,9 +80,6 @@ def main() -> int:
                         _dst = tmp / f'{_key}.png'
                         _img.save(_dst)
                         imgs[_key] = _dst
-                    txl = sorted((ROOT / "data/blood/txl-pbc/TXL-PBC/images/val").glob("*.png"))
-                    imgs["txl_real"] = txl[1]
-                    imgs["txl_real2"] = txl[2]
                     page = await browser.new_page(viewport={"width": 1440, "height": 900})
                     hosts: set[str] = set()
 
