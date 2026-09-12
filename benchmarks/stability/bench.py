@@ -66,6 +66,7 @@ def make_images(tmp: Path):
 
 
 async def import_file(page, path: Path):
+    await page.evaluate("() => { document.querySelector('#import-note').textContent = ''; }")
     async with page.expect_file_chooser() as fc:
         await page.click("#import-btn")
     chooser = await fc.value

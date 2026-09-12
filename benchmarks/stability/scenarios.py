@@ -18,6 +18,17 @@ def register(B, IMG):
         await b.page.select_option("#specimens", index=idx)
         await b.page.wait_for_timeout(800)
 
+    async def select_by_name(b, name, timeout=15000):
+        await b.page.wait_for_function(
+            f"""() => [...document.querySelectorAll('#specimens option')]
+                .some(o => (o.textContent || '').includes('{name}'))""",
+            timeout=timeout)
+        idx = await b.page.evaluate(
+            f"""() => [...document.querySelectorAll('#specimens option')]
+                .findIndex(o => (o.textContent || '').includes('{name}'))""")
+        await b.page.select_option("#specimens", index=idx)
+        await b.page.wait_for_timeout(800)
+
     async def import_note_id(b):
         txt = await b.page.text_content("#import-note")
         import re
@@ -341,15 +352,13 @@ def register(B, IMG):
     async def _(b):
         from bench import import_file
         import pathlib
-        tmp = pathlib.Path("/tmp/bench_raw2.png")
+        tmp = pathlib.Path("/tmp/bench_r06.png")
         from PIL import Image
         Image.new("RGB", (300, 300), (95, 105, 115)).save(tmp)
         await import_file(b.page, tmp)
         await b.page.wait_for_function(
             "() => document.querySelector('#import-note').textContent.length > 0", timeout=30000)
-        ids = await b.specimen_ids()
-        await b.page.select_option("#specimens", index=len(ids) - 1)
-        await b.page.wait_for_timeout(800)
+        await select_by_name(b, "bench_r06.png")
         await b.page.click("#synthesize")
         await b.page.wait_for_timeout(4000)
         txt = await b.job_text()
@@ -478,11 +487,39 @@ def register(B, IMG):
 
     @S("W02-sign-before-valid", "review", 2)
     async def _(b):
-        return [check("blocked-or-msg", True, "covered by R06 state + W01 flow")]
+        from bench import import_file
+        import pathlib
+        tmp = pathlib.Path("/tmp/bench_w02.png")
+        from PIL import Image
+        Image.new("RGB", (300, 300), (80, 95, 110)).save(tmp)
+        await import_file(b.page, tmp)
+        await b.page.wait_for_function(
+            "() => document.querySelector('#import-note').textContent.length > 0", timeout=30000)
+        await select_by_name(b, "bench_w02.png")
+        await b.page.click("#signoff")
+        await b.page.wait_for_timeout(2000)
+        txt = await b.page.text_content("#review-out")
+        return [check("blocked-with-msg", "fail" in txt.lower(), txt[:100])]
 
     @S("W03-upstream-change-blocks", "review", 2)
     async def _(b):
-        return [check("stale-guard-exists", True, "covered by api suite + W01 state")]
+        await prepared_v1(b)
+        note = await b.note_text()
+        if len(note) < 100:
+            return [check("skipped-no-note", True, "no synthesized note to guard")]
+        await b.page.click("#signoff")
+        await b.page.wait_for_timeout(2000)
+        first = await b.page.text_content("#review-out")
+        btns = b.page.locator("#findings button[data-act='reject']")
+        if await btns.count() == 0:
+            return [check("skipped-no-targets", True, "")]
+        await btns.first.click()
+        await b.page.wait_for_timeout(2000)
+        await b.page.click("#signoff")
+        await b.page.wait_for_timeout(2000)
+        second = await b.page.text_content("#review-out")
+        return [check("first-signed", "signed off" in first.lower(), first[:80]),
+                check("stale-blocked", "fail" in second.lower(), second[:100])]
 
     @S("W04-repeat-sign", "review", 1)
     async def _(b):
@@ -511,7 +548,17 @@ def register(B, IMG):
 
     @S("A02-navigate-mid-analysis", "async", 2)
     async def _(b):
-        return [check("covered-in-V05-pattern", True, "see V05")]
+        await prepared_v1(b)
+        await b.page.click("#analyze")
+        await b.page.wait_for_timeout(2000)
+        await b.page.select_option("#specimens", index=0)
+        await b.page.wait_for_timeout(1500)
+        errs = [e for e in b.ctx.console_errors if "uncaught" in e.lower()]
+        await b.page.wait_for_function(
+            "() => /done|failed/.test(document.querySelector('#st-job').textContent || '')",
+            timeout=240000)
+        return [check("no-uncached-crash", not errs, errs[:1]),
+                check("job-settled", True)]
 
     @S("A03-rapid-mode-switch", "async", 2)
     async def _(b):
