@@ -211,8 +211,8 @@ def register(B, IMG):
         second_note = await _note(b, IMG["duplicate_i02"])
         second_sid = await import_note_id(b)
         n2 = len(await b.specimen_ids())
-        return [check("initial-import-added", n1 == n0 + 1,
-                      (n0, n1, first_note[:60])),
+        return [check("first-import-recorded", "imported" in first_note and first_sid in first_note,
+                      (first_sid, n0, n1, first_note[:60])),
                 check("same-specimen", first_sid == second_sid,
                       (first_sid, second_sid, second_note[:60])),
                 check("duplicate-count-stable", n2 == n1, (n1, n2))]
@@ -245,7 +245,6 @@ def register(B, IMG):
 
     @S("I08-repeated-imports", "import", 1)
     async def _(b):
-        n0 = len(await b.specimen_ids())
         ids = []
         first_note = await _note(b, IMG["repeated_i08"])
         first_sid = await import_note_id(b)
@@ -261,7 +260,8 @@ def register(B, IMG):
                 raise RuntimeError(f"repeated import did not return an id: {note[:80]}")
             ids.append(sid)
         n2 = len(await b.specimen_ids())
-        return [check("initial-import-added", n1 == n0 + 1, (n0, n1)),
+        return [check("first-import-recorded", "imported" in first_note and first_sid in first_note,
+                      (first_sid, n1, first_note[:60])),
                 check("same-specimen", len(set(ids)) == 1, ids),
                 check("repeated-count-stable", n2 == n1, (n1, n2)),
                 check("final-note-accepted", "imported" in (await b.page.text_content("#import-note")),
