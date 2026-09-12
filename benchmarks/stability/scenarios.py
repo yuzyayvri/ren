@@ -261,11 +261,12 @@ def register(B, IMG):
     @S("V02-blank-zero-findings", "vision", 2)
     async def _(b):
         from bench import import_file
-        await import_file(b.page, IMG["blank"])
+        await import_file(b.page, IMG["blank_v02"])
         await b.page.wait_for_function(
             "() => document.querySelector('#import-note').textContent.length > 0", timeout=30000)
         sid = await import_note_id(b)
         await select_by_value(b, sid)
+        b.ctx.bind_fixture("blank_v02", sid)
         st = await _analyze_current(b)
         body = await b.page.text_content("#findings")
         n = await b.findings_count()
@@ -485,12 +486,12 @@ def register(B, IMG):
         # Import and select by the returned content id.  Registry deduplication
         # preserves the first filename, so a display-name lookup can resolve
         # to an old fixture after a prior benchmark run.
-        note = await _note(b, IMG["blank"])
+        note = await _note(b, IMG["blank_f09"])
         sid = await import_note_id(b)
         if not sid:
             raise RuntimeError(f"blank fixture import did not return an id: {note}")
         await select_by_value(b, sid)
-        b.ctx.bind_fixture("blank", sid)
+        b.ctx.bind_fixture("blank_f09", sid)
         st = await analyze_current(b)
         await b.page.wait_for_function(
             "() => /no findings|no overlay findings/.test(document.querySelector('#findings').textContent || '')",
@@ -791,32 +792,57 @@ def register(B, IMG):
 
     @S("Y07-stale-draft-invalidated", "synthesis", 1)
     async def _(b):
-        await prepared_v1(b, "txl_y07")
+        sid = await prepared_v1(b, "txl_y07")
         job0, note0 = await synth_done(b)
         first_packet = await b.page.evaluate(
             """async id => (await (await fetch(`/api/v1/export/${id}`)).json()).synthesis.packet""",
             await b.page.input_value("#specimens"))
-        btns = b.page.locator("#findings button[data-act='reject']")
+        btns = b.page.locator("#findings button[data-act='confirm']")
         if await btns.count():
             target = btns.first
             fid = await target.get_attribute("data-fid")
             if not fid:
-                raise RuntimeError("reject action has no finding id")
-            await target.click()
+                raise RuntimeError("finding action has no finding id")
+            # Change an existing reviewed finding in the append-only review log.
+            # A correction keeps the finding identity in the packet while
+            # changing its reviewed qualifier, so the second synthesis must
+            # validate a genuinely new upstream packet rather than relying on
+            # a model response for a sparse F2.. sequence.
+            correction = await b.page.evaluate(
+                """async ({sid, fid}) => {
+                    const r = await fetch('/api/v1/reviews', {
+                      method: 'POST', headers: {'Content-Type': 'application/json'},
+                      body: JSON.stringify({specimen_id: sid, finding_id: fid,
+                        action: 'correct', changes: {qualifier: 'uncertain'},
+                        reviewer: 'workstation', reason: 'stale-draft regression'})
+                    });
+                    return {status: r.status, body: await r.json()};
+                }""", {"sid": sid, "fid": fid})
+            if correction["status"] != 200:
+                raise RuntimeError(f"finding correction failed: {correction}")
             await b.page.wait_for_function(
-                "fid => ![...document.querySelectorAll('#findings .ev')].some(e => e.dataset.fid === fid)",
-                arg=fid, timeout=30000)
+                "async ({sid, fid}) => { const r = await fetch(`/api/v1/findings/${sid}`); "
+                "if (!r.ok) return false; const body = await r.json(); "
+                "const f = body.findings.find(item => item.finding_id === fid); "
+                "return f && f.review_state === 'corrected' && f.qualifier === 'uncertain'; }",
+                arg={"sid": sid, "fid": fid}, timeout=30000)
         else:
             raise RuntimeError("prepared fixture has no finding to invalidate")
         job1, note1 = await synth_done(b)
         second_packet = await b.page.evaluate(
             """async id => (await (await fetch(`/api/v1/export/${id}`)).json()).synthesis.packet""",
             await b.page.input_value("#specimens"))
+        first_finding = next((f for f in first_packet.get("findings", [])
+                              if f.get("finding_id") == fid), {})
+        second_finding = next((f for f in second_packet.get("findings", [])
+                               if f.get("finding_id") == fid), {})
         changed = first_packet != second_packet
-        remaining_ids = {finding["finding_id"] for finding in second_packet.get("findings", [])}
         return [check("re-synth-runs", "done" in job1, job1[:80]),
-                check("draft-not-blindly-reused", changed and fid not in remaining_ids and note0 != note1,
-                      (changed, fid, sorted(remaining_ids)))]
+                check("draft-not-blindly-reused",
+                      changed and first_finding.get("qualifier") != second_finding.get("qualifier")
+                      and second_finding.get("qualifier") == "uncertain" and note0 != note1,
+                      (changed, first_finding.get("qualifier"),
+                       second_finding.get("qualifier")))]
 
     # ---- provenance (6) ----
     @S("P01-claim-click-region", "provenance", 2)
@@ -859,7 +885,7 @@ def register(B, IMG):
     async def _(b):
         await prepared_v1(b, "txl_p04")
         old = await b.page.input_value("#specimens")
-        new = await import_and_select(b, IMG["r06"], "r06")
+        new = await import_and_select(b, IMG["r06_switch"], "r06_switch")
         if old == new:
             raise RuntimeError("switch fixture did not produce a distinct specimen")
         label = await b.page.text_content("#specimen-label")

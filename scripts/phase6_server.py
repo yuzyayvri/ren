@@ -47,26 +47,6 @@ def sha256_path(path: Path) -> str:
     return h.hexdigest()
 
 
-def build_v1_packet(specimen_id: str, findings: list[dict[str, Any]],
-                    context: list[dict[str, Any]]) -> dict[str, Any]:
-    """Build a revision-scoped packet while retaining specimen identity.
-
-    llama-server may reuse a cached prompt for an identical case id.  A
-    changed review/evidence set is a new packet revision, so include a digest
-    of the stable specimen packet in the case id before the request reaches
-    the model.  The digest is computed from the legacy identity first, then
-    the final packet is validated and hashed by the caller for job admission.
-    """
-    from scripts.phase5_packet import build_packet, canonical_bytes, validate_packet
-
-    packet = build_packet(
-        f"v1-{specimen_id}", "phase3-txl", findings, context,
-        ["image-level-only", "no-patient-linkage"])
-    revision = sha256_bytes(canonical_bytes(packet))[:12]
-    packet["case_id"] = f"v1-{specimen_id}-{revision}"
-    return validate_packet(packet)
-
-
 V1_SOURCE = "v1-import"
 
 
@@ -629,7 +609,7 @@ def create_app() -> Any:
     def v1_synthesize(specimen_id: str) -> Any:
         from scripts import v1_findings as findings
         from scripts import v1_retrieve as retrieval
-        from scripts.phase5_packet import canonical_bytes
+        from scripts.phase5_packet import build_packet, canonical_bytes
 
         directory = _v1_dir(specimen_id)
         if not (directory / "vision.json").is_file():
@@ -638,10 +618,11 @@ def create_app() -> Any:
         if not confirmed:
             raise HTTPException(status_code=409, detail="no confirmed findings")
         try:
-            packet = build_v1_packet(
-                specimen_id,
+            packet = build_packet(
+                f"v1-{specimen_id}", "phase3-txl",
                 findings.to_packet_findings(confirmed),
-                retrieval.to_packet_context(directory))
+                retrieval.to_packet_context(directory),
+                ["image-level-only", "no-patient-linkage"])
         except (ValueError, OSError, retrieval.RetrievalError) as exc:
             raise HTTPException(status_code=409, detail=str(exc))
 
@@ -695,7 +676,7 @@ def create_app() -> Any:
     def v1_signoff(specimen_id: str, body: dict[str, Any]) -> Any:
         from scripts import v1_findings as findings
         from scripts import v1_retrieve as retrieval
-        from scripts.phase5_packet import packet_digest
+        from scripts.phase5_packet import build_packet, canonical_bytes, packet_digest
 
         directory = _v1_dir(specimen_id)
         synthesis_path = directory / "synthesis.json"
@@ -704,11 +685,12 @@ def create_app() -> Any:
         synthesis = json.loads(synthesis_path.read_text(encoding="utf-8"))
         if synthesis.get("status") != "ok" or "validated" not in synthesis:
             raise HTTPException(status_code=409, detail="no valid synthesis to sign")
-        current = build_v1_packet(
-            specimen_id,
+        current = build_packet(
+            f"v1-{specimen_id}", "phase3-txl",
             findings.to_packet_findings(findings.confirmed_findings(directory)),
-            retrieval.to_packet_context(directory))
-        if packet_digest(current) != packet_digest(synthesis["packet"]):
+            retrieval.to_packet_context(directory),
+            ["image-level-only", "no-patient-linkage"])
+        if sha256_bytes(canonical_bytes(current)) != packet_digest(synthesis["packet"]):
             raise HTTPException(status_code=409,
                                 detail="findings or evidence changed since synthesis; re-synthesize")
         record = {"schema": "v1-signoff-v1", "specimen_id": specimen_id,

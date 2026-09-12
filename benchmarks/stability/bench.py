@@ -60,11 +60,11 @@ def make_images(tmp: Path, tag: str = ""):
     otherwise resurrect prior runs' review state)."""
     from PIL import Image
 
-    def _vary(img):
+    def _vary(img, salt=""):
         if not tag:
             return img
         px = img.load()
-        seed = sum(tag.encode()) % 251
+        seed = sum(f"{tag}:{salt}".encode()) % 251
         px[0, 0] = (seed, (seed * 7) % 256, (seed * 13) % 256)
         return img
 
@@ -77,6 +77,10 @@ def make_images(tmp: Path, tag: str = ""):
     # filename, so a deterministic blank image can otherwise inherit a stale
     # filename from an earlier run and make name-based setup ambiguous.
     _vary(Image.new("RGB", (300, 300), (128, 128, 128))).save(imgs["blank"])
+    imgs["blank_v02"] = tmp / "blank_v02.png"
+    _vary(Image.new("RGB", (300, 300), (128, 128, 128)), "blank_v02").save(imgs["blank_v02"])
+    imgs["blank_f09"] = tmp / "blank_f09.png"
+    _vary(Image.new("RGB", (300, 300), (128, 128, 128)), "blank_f09").save(imgs["blank_f09"])
     imgs["rgba"] = tmp / "rgba.png"
     Image.new("RGBA", (200, 200), (10, 20, 30, 40)).save(imgs["rgba"])
     imgs["gray"] = tmp / "gray.png"
@@ -89,6 +93,8 @@ def make_images(tmp: Path, tag: str = ""):
     Image.new("RGB", (5000, 5000), (5, 5, 5)).save(imgs["huge"])
     imgs["r06"] = tmp / "r06.png"
     _vary(Image.new("RGB", (300, 300), (95, 105, 115))).save(imgs["r06"])
+    imgs["r06_switch"] = tmp / "r06_switch.png"
+    _vary(Image.new("RGB", (300, 300), (95, 105, 115)), "r06_switch").save(imgs["r06_switch"])
     imgs["w02"] = tmp / "w02.png"
     _vary(Image.new("RGB", (300, 300), (80, 95, 110))).save(imgs["w02"])
     return imgs

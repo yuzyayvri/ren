@@ -236,16 +236,17 @@ def _v1_specimen_with_vision(client, label="WBC"):
 
 
 def _v1_synthesis(directory, label="WBC", go="GO:0002443"):
-    from scripts.phase6_server import build_v1_packet
+    from scripts.phase5_packet import build_packet
     from scripts.phase5_render import render_note
     from scripts.phase5_validate import validate_response
 
-    packet = build_v1_packet(
-        directory.name,
+    packet = build_packet(
+        f"v1-{directory.name}", "phase3-txl",
         [{"finding_id": "F1", "label": label, "confidence": 0.9,
           "qualifier": "observed"}],
         [{"evidence_id": "E1", "go_id": go, "name": "n",
-          "definition": "d", "rank": 1, "mode": "hybrid", "query": "q"}])
+          "definition": "d", "rank": 1, "mode": "hybrid", "query": "q"}],
+        ["image-level-only", "no-patient-linkage"])
     response = {"schema": "phase5-response-v1", "case_id": packet["case_id"],
                 "abstained": False,
                 "claims": [{"claim_id": "C1", "text": f"{label} seen, {go}.",
@@ -370,26 +371,9 @@ def test_v1_synthesis_reuses_identical_active_job(client, monkeypatch):
         assert second == first
         _time.sleep(1.5)
         assert client.get(f"/api/jobs/{first}").json()["state"] == "done"
-        assert len(calls) == 1 and calls[0].startswith(f"v1-{specimen_id}-")
+        assert calls == [f"v1-{specimen_id}"]
     finally:
         shutil.rmtree(directory)
-
-
-def test_v1_packet_case_id_scopes_revision():
-    from scripts.phase6_server import build_v1_packet
-
-    finding = [{"finding_id": "F1", "label": "WBC", "confidence": 0.9,
-                "qualifier": "observed"}]
-    context = [{"evidence_id": "E1", "go_id": "GO:0002443", "name": "n",
-                "definition": "d", "rank": 1, "mode": "hybrid", "query": "q"}]
-    first = build_v1_packet("abcdef123456", finding, context)
-    repeat = build_v1_packet("abcdef123456", finding, context)
-    changed = build_v1_packet("abcdef123456", finding,
-                              [{**context[0], "query": "different"}])
-    assert first["case_id"] == repeat["case_id"]
-    assert first["case_id"].startswith("v1-abcdef123456-")
-    assert first["case_id"] != changed["case_id"]
-
 
 def test_retrieve_returns_finding_mapped_sets(client):
     specimen_id, directory = _v1_specimen_with_vision(client)
