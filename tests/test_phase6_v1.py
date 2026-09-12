@@ -352,7 +352,7 @@ def test_retrieve_returns_finding_mapped_sets(client):
                 assert query == "white blood cell leukocyte"
                 return ["GO:0002443"]
 
-        import unittest.mock as mock
+        from unittest import mock
 
         with mock.patch.object(rec, "load_bound_query", return_value=Engine()):
             body = client.post(f"/api/v1/retrieve/{specimen_id}").json()
