@@ -66,7 +66,19 @@ def main() -> int:
                 try:
                     tmp = RESULTS / "tmp"
                     tmp.mkdir(exist_ok=True)
-                    imgs = make_images(tmp)
+                    import uuid as _uuid
+                    run_tag = _uuid.uuid4().hex[:8]
+                    imgs = make_images(tmp, tag=run_tag)
+                    print(f"run tag {run_tag}: content-unique imports for isolation")
+                    from PIL import Image as _Image
+                    for _key, _src in (('txl_real', txl[1]), ('txl_real2', txl[2])):
+                        _img = _Image.open(_src).convert('RGB')
+                        _px = _img.load()
+                        _seed = sum(run_tag.encode()) % 251
+                        _px[0, 0] = (_seed, (_seed * 7) % 256, (_seed * 13) % 256)
+                        _dst = tmp / f'{_key}.png'
+                        _img.save(_dst)
+                        imgs[_key] = _dst
                     txl = sorted((ROOT / "data/blood/txl-pbc/TXL-PBC/images/val").glob("*.png"))
                     imgs["txl_real"] = txl[1]
                     imgs["txl_real2"] = txl[2]

@@ -44,12 +44,23 @@ def check(name, ok, detail=""):
     return {"name": name, "ok": bool(ok), "detail": str(detail)[:200]}
 
 
-def make_images(tmp: Path):
+def make_images(tmp: Path, tag: str = ""):
+    """Test images. With a tag, one corner pixel is varied so each benchmark
+    run imports content-unique specimens (deterministic registry ids would
+    otherwise resurrect prior runs' review state)."""
     from PIL import Image
+
+    def _vary(img):
+        if not tag:
+            return img
+        px = img.load()
+        seed = sum(tag.encode()) % 251
+        px[0, 0] = (seed, (seed * 7) % 256, (seed * 13) % 256)
+        return img
 
     imgs = {}
     imgs["valid"] = tmp / "valid.png"
-    Image.new("RGB", (360, 363), (190, 170, 165)).save(imgs["valid"])
+    _vary(Image.new("RGB", (360, 363), (190, 170, 165))).save(imgs["valid"])
     imgs["blank"] = tmp / "blank.png"
     Image.new("RGB", (300, 300), (128, 128, 128)).save(imgs["blank"])
     imgs["rgba"] = tmp / "rgba.png"
