@@ -113,7 +113,6 @@ def add_manual_evidence(specimen_dir: Path, finding_id: str, go_id: str, *,
         raise RetrievalError(f"bad GO identifier: {go_id!r}")
     path = specimen_dir / "evidence.json"
     sets = _load_sets(specimen_dir)
-    sets = json.loads(path.read_text(encoding="utf-8"))
     if finding_id not in sets:
         raise RetrievalError(f"unknown finding: {finding_id}")
     import sqlite3
