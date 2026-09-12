@@ -333,6 +333,8 @@ def test_v1_cancel_mid_synthesis_leaves_state(client, monkeypatch):
 
 
 def test_v1_synthesis_reuses_identical_active_job(client, monkeypatch):
+    import concurrent.futures
+    import threading
     import time as _time
 
     import scripts.phase5_synthesize as synthesis
@@ -348,17 +350,27 @@ def test_v1_synthesis_reuses_identical_active_job(client, monkeypatch):
                                  "finding_id": "F1"}],
                    "excluded": [], "manual_adds": []}}))
 
+        calls = []
+        barrier = threading.Barrier(2)
+
         def slow(packet, base_url, timeout_s=600.0, transport=None):
+            calls.append(packet["case_id"])
             _time.sleep(1)
             return {"status": "ok", "packet": packet,
                     "validated": {"abstained": True}, "note": "n"}
 
         monkeypatch.setattr(synthesis, "synthesize_packet", slow)
-        first = client.post(f"/api/v1/synthesize/{specimen_id}").json()["job_id"]
-        second = client.post(f"/api/v1/synthesize/{specimen_id}").json()["job_id"]
+        def submit():
+            barrier.wait(timeout=5)
+            return client.post(f"/api/v1/synthesize/{specimen_id}").json()["job_id"]
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            ids = list(pool.map(lambda _: submit(), range(2)))
+        first, second = ids
         assert second == first
         _time.sleep(1.5)
         assert client.get(f"/api/jobs/{first}").json()["state"] == "done"
+        assert calls == [f"v1-{specimen_id}"]
     finally:
         shutil.rmtree(directory)
 

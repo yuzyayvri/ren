@@ -31,6 +31,8 @@ class Ctx:
         self.console_errors: list[str] = []
         self.bad_responses: list[str] = []
         self.failed_requests: list[str] = []
+        self.expected_failed_requests: set[str] = set()
+        self.unexpected_failed_requests: list[str] = []
         page.on("console", lambda m: self.console_errors.append(m.text) if m.type == "error" else None)
         page.on("pageerror", lambda e: self.console_errors.append(str(e)))
         page.on("requestfailed", lambda r: self.failed_requests.append(f"{r.method} {r.url}"))
@@ -38,6 +40,9 @@ class Ctx:
 
     def errors_since(self, n):
         return self.console_errors[n:]
+
+    def expect_failed_request(self, url_fragment: str) -> None:
+        self.expected_failed_requests.add(url_fragment)
 
 
 def check(name, ok, detail=""):
@@ -77,6 +82,10 @@ def make_images(tmp: Path, tag: str = ""):
     imgs["textpng"].write_bytes(b"plain text pretending to be a png file here" * 3)
     imgs["huge"] = tmp / "huge.png"
     Image.new("RGB", (5000, 5000), (5, 5, 5)).save(imgs["huge"])
+    imgs["r06"] = tmp / "r06.png"
+    _vary(Image.new("RGB", (300, 300), (95, 105, 115))).save(imgs["r06"])
+    imgs["w02"] = tmp / "w02.png"
+    _vary(Image.new("RGB", (300, 300), (80, 95, 110))).save(imgs["w02"])
     return imgs
 
 
@@ -95,12 +104,16 @@ async def import_file(page, path: Path):
 
 
 class Bench:
-    def __init__(self, page, base_url):
+    def __init__(self, page, base_url, *, artifact_dir: Path | None = None,
+                 backend_log: Path | None = None):
         self.page = page
         self.base_url = base_url
         self.hosts: set = set()
         self.ctx = Ctx(page)
         self.scenarios = []
+        self.artifact_dir = artifact_dir or RESULTS
+        self.shots_dir = self.artifact_dir / "shots"
+        self.backend_log = backend_log or (self.artifact_dir / "backend.log")
 
     def scenario(self, sid, cat, weight):
         def deco(fn):
@@ -146,16 +159,27 @@ class Bench:
             if progress_path is not None:
                 progress_path.write_text(_json.dumps({'running': spec['id'], 'done': len(results), 'of': len(self.scenarios)}) + chr(10))
             err0 = len(self.ctx.console_errors)
+            req0 = len(self.ctx.failed_requests)
+            bad0 = len(self.ctx.bad_responses)
+            self.ctx.expected_failed_requests = set()
+            screenshot = None
             try:
+                # Every scenario starts from a fresh page state.  Durable
+                # fixtures are still created/validated by the scenario itself,
+                # but stale DOM state from an earlier scenario cannot satisfy
+                # its preconditions accidentally.
+                await self.page.set_viewport_size({"width": 1440, "height": 900})
+                await self.goto_app()
                 checks = await asyncio.wait_for(spec["fn"](self), timeout=per_scenario_s)
                 crashed = False
             except Exception as exc:  # noqa: BLE001 - a crash/timeout is a scored outcome
                 checks = [check("no-crash", False, repr(exc)[:200])]
                 crashed = True
                 try:
-                    shot = RESULTS / "shots" / f"{spec['id']}.png"
+                    shot = self.shots_dir / f"{spec['id']}.png"
                     shot.parent.mkdir(parents=True, exist_ok=True)
                     await self.page.screenshot(path=str(shot))
+                    screenshot = str(shot.relative_to(self.artifact_dir))
                 except Exception:  # noqa: BLE001
                     pass
             ok = sum(1 for c in checks if c["ok"])
@@ -163,16 +187,32 @@ class Bench:
             backend_tail = []
             if ok < len(checks):
                 try:
-                    lines = (ROOT / "artifacts" / "benchmark_results" / "stability" / "backend.log").read_text().splitlines()
+                    lines = self.backend_log.read_text().splitlines()
                     backend_tail = [l[-220:] for l in lines if ("/api/" in l and (" 5" in l or " 4" in l))][-6:]
                 except Exception:  # noqa: BLE001 - forensics must never break scoring
                     pass
             forensics = {"backend_errors": backend_tail} if backend_tail else {}
-            results.append({"id": spec["id"], "cat": spec["cat"], "weight": spec["weight"],
-                            "checks": checks, "forensics": forensics, "score": round(score, 2),
-                            "ms": int((time.monotonic() - t0) * 1000),
-                            "crashed": crashed,
-                            "new_console_errors": self.ctx.errors_since(err0)})
+            new_failed_requests = self.ctx.failed_requests[req0:]
+            expected_failed_requests = [
+                request for request in new_failed_requests
+                if any(fragment in request for fragment in self.ctx.expected_failed_requests)
+            ]
+            unexpected_failed_requests = [
+                request for request in new_failed_requests if request not in expected_failed_requests
+            ]
+            self.ctx.unexpected_failed_requests.extend(unexpected_failed_requests)
+            scenario = {"id": spec["id"], "cat": spec["cat"], "weight": spec["weight"],
+                        "checks": checks, "forensics": forensics, "score": round(score, 2),
+                        "ms": int((time.monotonic() - t0) * 1000),
+                        "crashed": crashed,
+                        "new_console_errors": self.ctx.errors_since(err0),
+                        "new_failed_requests": new_failed_requests,
+                        "expected_failed_requests": expected_failed_requests,
+                        "unexpected_failed_requests": unexpected_failed_requests,
+                        "new_bad_responses": self.ctx.bad_responses[bad0:]}
+            if screenshot is not None:
+                scenario["screenshot"] = screenshot
+            results.append(scenario)
             if progress_path is not None:
                 progress_path.write_text(_json.dumps(
                     {"done": len(results), "of": len(self.scenarios),

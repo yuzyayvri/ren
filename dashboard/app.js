@@ -6,7 +6,8 @@ const S = {
   view: {scale: 1, ox: 0, oy: 0}, showOverlay: true,
   evidence: [], packet: null, note: null, validated: false, jobTimer: null,
   loadToken: 0, specimensToken: 0, findingsToken: 0, importToken: 0,
-  jobToken: 0,
+  jobToken: 0, analysisJobIds: [], v1JobIds: [], autoRetrievePromise: null,
+  autoRetrieveId: null,
 };
 const $ = (id) => document.getElementById(id);
 const api = async (path, opts) => {
@@ -120,6 +121,13 @@ async function loadIndex(i) {
   const isCurrent = () => token === S.loadToken && S.specimens[S.index]?.id === spec.id;
   S.isV1 = /^[0-9a-f]{12}$/.test(spec.id);
   $("analyze").style.display = S.isV1 ? "" : "none";
+  S.evidence = []; S.lastRetrieval = null; S.packet = null; S.note = null; S.validated = false;
+  $("evidence").innerHTML = "";
+  $("note").textContent = "";
+  $("note").classList.remove("provisional");
+  $("review-out").textContent = "";
+  $("job").textContent = "";
+  $("st-job").textContent = "idle";
   $("findings").innerHTML = `<span class="dim">loading findings…</span>`;
   $("findings").dataset.counts = "{}";
   clearInterval(S.jobTimer); S.jobTimer = null; ++S.jobToken;
@@ -200,7 +208,8 @@ function bindReviewModeBar() {
     $("st-job").textContent = `auto-approved ${r.confirmed.length}`;
     await loadV1Findings();
     refreshV1Overlays();
-    autoRetrieveQuiet();
+    await autoRetrieveQuiet();
+    $("st-job").textContent = "auto-approved " + r.confirmed.length + "; evidence attached automatically";
   });
 }
 async function loadV1Findings() {
@@ -231,7 +240,7 @@ async function loadV1Findings() {
         body: JSON.stringify({specimen_id: id, finding_id: b.dataset.fid, action: b.dataset.act, reviewer: "workstation"})});
       await loadV1Findings();
       refreshV1Overlays();
-      if (b.dataset.act === "confirm") autoRetrieveQuiet();
+      if (b.dataset.act === "confirm") await autoRetrieveQuiet();
     }));
   } catch (e) {
     if (!isCurrent()) return;
@@ -246,6 +255,7 @@ async function analyzeSpecimen() {
   const loadToken = S.loadToken;
   $("st-job").textContent = "analyzing…";
   const {job_id} = await api(`/api/v1/analyze/${id}`, {method: "POST"});
+  S.analysisJobIds.push(job_id);
   const timer = setInterval(async () => {
     if (loadToken !== S.loadToken || S.specimens[S.index]?.id !== id) {
       clearInterval(timer); return;
@@ -289,7 +299,6 @@ $("import-file").addEventListener("change", async () => {
     if (!response.ok) throw new Error(r.detail || "rejected");
     if (!r.specimen_id) throw new Error(r.detail || "rejected");
     if (token !== S.importToken) return;
-    $("import-note").textContent = `imported ${r.specimen_id}`;
     await loadSpecimens();
     if (token !== S.importToken) return;
     let at = S.specimens.findIndex((s) => s.id === r.specimen_id);
@@ -299,7 +308,11 @@ $("import-file").addEventListener("change", async () => {
       at = S.specimens.findIndex((s) => s.id === r.specimen_id);
     }
     if (token !== S.importToken) return;
-    if (at >= 0) { $("specimens").value = r.specimen_id; await loadIndex(at); }
+    if (at >= 0) {
+      $("specimens").value = r.specimen_id;
+      await loadIndex(at);
+      $("import-note").textContent = `imported ${r.specimen_id}`;
+    }
     else { $("import-note").textContent = `imported ${r.specimen_id} (select it in the list)`; }
   } catch (e) {
     if (token === S.importToken) $("import-note").textContent = `import failed`;
@@ -323,13 +336,27 @@ $("retrieve").addEventListener("click", async () => {
   } catch (e) { $("evidence").innerHTML = `<span class="bad">retrieval failed: ${e.message}</span>`; }
 });
 async function autoRetrieveQuiet() {
-  try {
-    await v1RetrieveAll();
-    $("st-job").textContent = "evidence attached automatically";
-  } catch (e) {
-    const el = $("evidence");
-    if (el) el.innerHTML = `<span class="bad">automatic retrieval failed: ${e.message} — manual query remains available</span>`;
-  }
+  const id = S.specimens[S.index]?.id;
+  if (!id) return;
+  if (S.autoRetrievePromise && S.autoRetrieveId === id) return S.autoRetrievePromise;
+  S.autoRetrieveId = id;
+  S.autoRetrievePromise = (async () => {
+    try {
+      await v1RetrieveAll(id);
+      if (S.specimens[S.index]?.id === id) $("st-job").textContent = "evidence attached automatically";
+    } catch (e) {
+      if (S.specimens[S.index]?.id === id) {
+        const el = $("evidence");
+        if (el) el.innerHTML = `<span class="bad">automatic retrieval failed: ${e.message} — manual query remains available</span>`;
+      }
+    } finally {
+      if (S.autoRetrieveId === id) {
+        S.autoRetrievePromise = null;
+        S.autoRetrieveId = null;
+      }
+    }
+  })();
+  return S.autoRetrievePromise;
 }
 async function v1RetrieveAll(id = S.specimens[S.index].id) {
   const r = await api(`/api/v1/retrieve/${id}`, {method: "POST"});
@@ -337,7 +364,7 @@ async function v1RetrieveAll(id = S.specimens[S.index].id) {
   $("evidence").innerHTML =
     `<div class="dim">automatic derivation (v1-query-derivation-v1), ${r.evidence} items</div>` +
     Object.entries(r.sets || {}).map(([fid, g]) =>
-      `<div class="ev"><span class="mono">${fid}</span> <span class="dim">query: ${g.query}</span><br>` +
+      `<div class="ev" data-fid="${fid}"><span class="mono">${fid}</span> <span class="dim">query: ${g.query}</span><br>` +
       g.evidence.map((e) => `<span class="mono">${e.evidence_id}</span> ${e.go_id} <span class="dim">[auto]</span>`).join("<br>") +
       `</div>`).join("");
 }
@@ -348,15 +375,18 @@ async function v1Synthesize(id = S.specimens[S.index].id) {
   $("note").classList.remove("provisional");
   S.note = null; S.validated = false;
   const {job_id} = await api(`/api/v1/synthesize/${id}`, {method: "POST"});
+  S.v1JobIds.push(job_id);
+  if (token !== S.jobToken || S.specimens[S.index]?.id !== id) return;
+  $("job").dataset.jobId = job_id;
   clearInterval(S.jobTimer);
-  S.jobTimer = setInterval(async () => {
+  const timer = setInterval(async () => {
     if (token !== S.jobToken || S.specimens[S.index]?.id !== id) {
-      clearInterval(S.jobTimer); return;
+      clearInterval(timer); return;
     }
     const j = await api(`/api/jobs/${job_id}`);
     $("job").textContent = `${j.state} (${Math.round((j.progress || 0) * 100)}%)`;
     if (j.state === "done" || j.state === "failed" || j.state === "cancelled") {
-      clearInterval(S.jobTimer);
+      clearInterval(timer);
       if (j.state === "done") {
         S.note = j.result.note; S.validated = j.result.validated;
         $("note").textContent = j.result.note;
@@ -364,6 +394,7 @@ async function v1Synthesize(id = S.specimens[S.index].id) {
       } else $("job").textContent = `${j.state}: ${j.error || ""}`;
     }
   }, 1500);
+  S.jobTimer = timer;
 }
 $("synthesize").addEventListener("click", async () => {
   if (S.isV1) {

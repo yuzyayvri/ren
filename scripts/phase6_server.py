@@ -403,9 +403,16 @@ def create_app() -> Any:
 
     @app.post("/api/server/stop")
     def server_stop() -> dict[str, Any]:
+        import subprocess
+
         proc = _managed_proc(app)
         if proc is not None:
             proc.terminate()
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=10)
             app.state.server_proc = None
             app.state.server_model = None
         return server_status()
@@ -446,10 +453,15 @@ def create_app() -> Any:
         for key in terminal[: max(0, len(terminal) + 1 - 128)]:
             del jobs[key]
 
-    def _start_job(fn: Any, *args: Any, metadata: dict[str, Any] | None = None) -> str:
+    def _start_job(fn: Any, *args: Any, metadata: dict[str, Any] | None = None,
+                   admit: Any = None) -> str:
         job_id = uuid.uuid4().hex[:12]
         with lock:
             _evict_jobs()
+            if admit is not None:
+                existing_id = admit()
+                if existing_id is not None:
+                    return existing_id
             jobs[job_id] = {"id": job_id, "state": "queued", "progress": 0.0}
             if metadata:
                 jobs[job_id].update(metadata)
@@ -618,14 +630,17 @@ def create_app() -> Any:
         # A browser reload loses its polling timer while the worker keeps
         # running.  Reusing an identical active job makes a subsequent user
         # click attach to that work instead of submitting a concurrent
-        # llama-server request (which can otherwise fail with HTTP 500).
-        with lock:
+        # llama-server request (which can otherwise fail with HTTP 500).  The
+        # admission callback executes under the same lock as job creation, so
+        # two simultaneous POSTs cannot both pass the active-job check.
+        def admit_identical() -> str | None:
             for active_id, active in jobs.items():
                 if (active.get("kind") == "v1-synthesis"
                         and active.get("specimen_id") == specimen_id
                         and active.get("packet_sha256") == packet_sha256
                         and active.get("state") in ("queued", "running")):
-                    return {"job_id": active_id}
+                    return active_id
+            return None
 
         def worker(job_id: str) -> None:
             from scripts.phase5_synthesize import (
@@ -655,7 +670,7 @@ def create_app() -> Any:
 
         return {"job_id": _start_job(
             worker, metadata={"kind": "v1-synthesis", "specimen_id": specimen_id,
-                              "packet_sha256": packet_sha256})}
+                              "packet_sha256": packet_sha256}, admit=admit_identical)}
 
     @app.post("/api/v1/signoff/{specimen_id}")
     def v1_signoff(specimen_id: str, body: dict[str, Any]) -> Any:

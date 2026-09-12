@@ -24,6 +24,14 @@ executes all scenarios, writes machine-readable
 `report.md`, captures screenshots only for failed scenarios, then tears
 both servers down. Filter with `BENCH_ONLY=<substring>`.
 
+Each invocation also writes an authoritative run directory at
+`artifacts/benchmark_results/stability/runs/<run-tag>/`. Its manifest and
+results bind the score to the candidate commit, a tracked-source digest, the
+scenario selection, browser request evidence, and an asserted teardown
+postcondition. A filtered run is diagnostic only and exits nonzero; the
+release gate requires an unfiltered 69-scenario run with no failed browser
+requests, bad responses, skips, or crashes.
+
 ## Scoring
 
 `rubric.json` fixes category weights totaling 100. Each scenario splits
@@ -39,10 +47,12 @@ generation dominate). Results record per-scenario milliseconds.
 
 ## Output
 
-- `results.json`: per-scenario checks, scores, timings, console errors,
-  failed requests, category totals.
-- `report.md`: human summary with partial/fail detail.
-- `shots/`: screenshots for failed scenarios only.
+- `results.json`: latest run pointer containing per-scenario checks, scores,
+  timings, browser errors, category totals, provenance, and teardown evidence.
+- `report.md`: human summary with run tag, candidate provenance, and partial/fail detail.
+- `runs/<run-tag>/`: immutable run-scoped manifest, log, progress, results,
+  report, and screenshots.
+- `shots/`: screenshots copied only from the latest run's failures.
 
 ## Limitations
 
