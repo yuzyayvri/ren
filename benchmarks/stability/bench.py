@@ -82,6 +82,7 @@ async def import_file(page, path: Path):
     # itself is covered once by G03-dialog-opens.
     # Returns the import-note text so callers can track created specimen ids.
     await page.evaluate("() => { document.querySelector('#import-note').textContent = ''; }")
+    await page.set_input_files("#import-file", [])
     await page.set_input_files("#import-file", str(path))
     await page.wait_for_function(
         "() => document.querySelector('#import-note').textContent.length > 0",
@@ -155,8 +156,16 @@ class Bench:
                     pass
             ok = sum(1 for c in checks if c["ok"])
             score = spec["weight"] * ok / max(1, len(checks))
+            backend_tail = []
+            if ok < len(checks):
+                try:
+                    lines = (ROOT / "artifacts" / "benchmark_results" / "stability" / "backend.log").read_text().splitlines()
+                    backend_tail = [l[-220:] for l in lines if ("/api/" in l and (" 5" in l or " 4" in l))][-6:]
+                except Exception:  # noqa: BLE001 - forensics must never break scoring
+                    pass
+            forensics = {"backend_errors": backend_tail} if backend_tail else {}
             results.append({"id": spec["id"], "cat": spec["cat"], "weight": spec["weight"],
-                            "checks": checks, "score": round(score, 2),
+                            "checks": checks, "forensics": forensics, "score": round(score, 2),
                             "ms": int((time.monotonic() - t0) * 1000),
                             "crashed": crashed,
                             "new_console_errors": self.ctx.errors_since(err0)})

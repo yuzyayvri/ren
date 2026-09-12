@@ -227,16 +227,20 @@ def register(B, IMG):
     async def _(b):
         await b.goto_app()
         await prepared_v1(b)
+        n0 = await b.findings_count()
         await b.scroll_findings(600)
         y0 = await b.page.evaluate("document.querySelector('#side').scrollTop")
         btn = b.page.locator("#findings button[data-act='confirm']").first
-        if await btn.count() == 0:
+        nb = await btn.count()
+        if nb == 0:
             return [check("skipped-no-targets", True, "")]
         await btn.click()
         await b.page.wait_for_timeout(2000)
         y1 = await b.page.evaluate("document.querySelector('#side').scrollTop")
+        n1 = await b.findings_count()
+        mode = await b.page.evaluate("() => document.querySelector('#findings').innerHTML.length")
         return [check("had-scroll", y0 > 50, (y0, y1)),
-                check("scroll-preserved", abs(y1 - y0) < 40, (y0, y1))]
+                check("scroll-preserved", abs(y1 - y0) < 40, (y0, y1, n0, n1, mode))]
 
     @S("F02-reject-scrolled", "findings", 1.5)
     async def _(b):
