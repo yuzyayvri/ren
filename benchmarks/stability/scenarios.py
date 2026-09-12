@@ -798,12 +798,7 @@ def register(B, IMG):
             await b.page.input_value("#specimens"))
         btns = b.page.locator("#findings button[data-act='reject']")
         if await btns.count():
-            # Keep F1 in the packet: the frozen model's deterministic response
-            # format follows the packet's contiguous finding-id sequence.
-            # Removing the last finding still changes the packet and exercises
-            # stale-draft invalidation without manufacturing an unresolvable
-            # F2..F20 sequence for the model to cite.
-            target = btns.last
+            target = btns.first
             fid = await target.get_attribute("data-fid")
             if not fid:
                 raise RuntimeError("reject action has no finding id")
