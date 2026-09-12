@@ -71,6 +71,12 @@ def make_images(tmp: Path, tag: str = ""):
     imgs = {}
     imgs["valid"] = tmp / "valid.png"
     _vary(Image.new("RGB", (360, 363), (190, 170, 165))).save(imgs["valid"])
+    imgs["duplicate_i02"] = tmp / "duplicate_i02.png"
+    _vary(Image.new("RGB", (360, 363), (190, 170, 165)), "duplicate_i02").save(
+        imgs["duplicate_i02"])
+    imgs["repeated_i08"] = tmp / "repeated_i08.png"
+    _vary(Image.new("RGB", (360, 363), (190, 170, 165)), "repeated_i08").save(
+        imgs["repeated_i08"])
     imgs["blank"] = tmp / "blank.png"
     # Keep the zero-finding fixture content-unique too.  The v1 registry
     # intentionally deduplicates by content and preserves the first upload's

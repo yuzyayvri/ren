@@ -202,11 +202,20 @@ def register(B, IMG):
     @S("I02-duplicate-import", "import", 1.5)
     async def _(b):
         n0 = len(await b.specimen_ids())
-        note = await _note(b, IMG["valid"])
+        first_note = await _note(b, IMG["duplicate_i02"])
+        first_sid = await import_note_id(b)
+        if not first_sid:
+            raise RuntimeError(f"initial duplicate fixture import did not return an id: {first_note[:80]}")
         n1 = len(await b.specimen_ids())
-        sid = await import_note_id(b)
-        return [check("stable-list", n1 == n0, (n0, n1, note[:60])),
-                check("same-specimen", bool(sid), sid or "missing id")]
+        b.ctx.bind_fixture("duplicate_i02", first_sid)
+        second_note = await _note(b, IMG["duplicate_i02"])
+        second_sid = await import_note_id(b)
+        n2 = len(await b.specimen_ids())
+        return [check("initial-import-added", n1 == n0 + 1,
+                      (n0, n1, first_note[:60])),
+                check("same-specimen", first_sid == second_sid,
+                      (first_sid, second_sid, second_note[:60])),
+                check("duplicate-count-stable", n2 == n1, (n1, n2))]
 
     @S("I03-corrupt-rejected", "import", 1.5)
     async def _(b):
@@ -236,14 +245,25 @@ def register(B, IMG):
 
     @S("I08-repeated-imports", "import", 1)
     async def _(b):
+        n0 = len(await b.specimen_ids())
         ids = []
-        for _ in range(3):
-            note = await _note(b, IMG["valid"])
+        first_note = await _note(b, IMG["repeated_i08"])
+        first_sid = await import_note_id(b)
+        if not first_sid:
+            raise RuntimeError(f"repeated import did not return an id: {first_note[:80]}")
+        ids.append(first_sid)
+        n1 = len(await b.specimen_ids())
+        b.ctx.bind_fixture("repeated_i08", first_sid)
+        for _ in range(2):
+            note = await _note(b, IMG["repeated_i08"])
             sid = await import_note_id(b)
             if not sid:
                 raise RuntimeError(f"repeated import did not return an id: {note[:80]}")
             ids.append(sid)
-        return [check("same-specimen", len(set(ids)) == 1, ids),
+        n2 = len(await b.specimen_ids())
+        return [check("initial-import-added", n1 == n0 + 1, (n0, n1)),
+                check("same-specimen", len(set(ids)) == 1, ids),
+                check("repeated-count-stable", n2 == n1, (n1, n2)),
                 check("final-note-accepted", "imported" in (await b.page.text_content("#import-note")),
                       await b.page.text_content("#import-note"))]
 
