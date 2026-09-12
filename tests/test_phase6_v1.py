@@ -332,6 +332,37 @@ def test_v1_cancel_mid_synthesis_leaves_state(client, monkeypatch):
         shutil.rmtree(directory)
 
 
+def test_v1_synthesis_reuses_identical_active_job(client, monkeypatch):
+    import time as _time
+
+    import scripts.phase5_synthesize as synthesis
+
+    specimen_id, directory = _v1_specimen_with_vision(client)
+    try:
+        (directory / "evidence.json").write_text(json.dumps({
+            "F1": {"query": "q", "rule": "r", "qualifier": "observed",
+                   "retrieved_unix": 1.0,
+                   "evidence": [{"evidence_id": "E1", "go_id": "GO:0002443",
+                                 "name": "n", "definition": "d", "rank": 1,
+                                 "mode": "hybrid", "query": "q", "origin": "auto-r",
+                                 "finding_id": "F1"}],
+                   "excluded": [], "manual_adds": []}}))
+
+        def slow(packet, base_url, timeout_s=600.0, transport=None):
+            _time.sleep(1)
+            return {"status": "ok", "packet": packet,
+                    "validated": {"abstained": True}, "note": "n"}
+
+        monkeypatch.setattr(synthesis, "synthesize_packet", slow)
+        first = client.post(f"/api/v1/synthesize/{specimen_id}").json()["job_id"]
+        second = client.post(f"/api/v1/synthesize/{specimen_id}").json()["job_id"]
+        assert second == first
+        _time.sleep(1.5)
+        assert client.get(f"/api/jobs/{first}").json()["state"] == "done"
+    finally:
+        shutil.rmtree(directory)
+
+
 def test_retrieve_returns_finding_mapped_sets(client):
     specimen_id, directory = _v1_specimen_with_vision(client)
     try:

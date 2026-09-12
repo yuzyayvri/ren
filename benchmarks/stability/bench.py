@@ -62,7 +62,11 @@ def make_images(tmp: Path, tag: str = ""):
     imgs["valid"] = tmp / "valid.png"
     _vary(Image.new("RGB", (360, 363), (190, 170, 165))).save(imgs["valid"])
     imgs["blank"] = tmp / "blank.png"
-    Image.new("RGB", (300, 300), (128, 128, 128)).save(imgs["blank"])
+    # Keep the zero-finding fixture content-unique too.  The v1 registry
+    # intentionally deduplicates by content and preserves the first upload's
+    # filename, so a deterministic blank image can otherwise inherit a stale
+    # filename from an earlier run and make name-based setup ambiguous.
+    _vary(Image.new("RGB", (300, 300), (128, 128, 128))).save(imgs["blank"])
     imgs["rgba"] = tmp / "rgba.png"
     Image.new("RGBA", (200, 200), (10, 20, 30, 40)).save(imgs["rgba"])
     imgs["gray"] = tmp / "gray.png"

@@ -40,6 +40,13 @@ def register(B, IMG):
         from bench import import_file
         sid = await b.page.evaluate("() => (window.__prepSid || null)")
         if sid:
+            # Other scenarios deliberately switch specimens (including the
+            # zero-finding fixture).  A cached preparation id is only useful
+            # after making it the active selection again and waiting for its
+            # findings render to settle.
+            if await b.page.input_value("#specimens") != sid:
+                await select_by_value(b, sid)
+            await b.wait_findings(timeout=15000)
             return sid
         await import_file(b.page, IMG["txl_real"])
         await b.page.wait_for_function(
@@ -231,10 +238,13 @@ def register(B, IMG):
             await prepared_v1(b)
             n0 = await b.findings_count()
             await b.scroll_findings(600)
-            btn = b.page.locator("#findings button[data-act='confirm']").first
-            nb = await btn.count()
+            btns = b.page.locator("#findings button[data-act='confirm']")
+            nb = await btns.count()
             if nb == 0:
                 return [check("skipped-no-targets", True, "")]
+            # Use a lower row so bringing the target into view leaves the
+            # findings pane genuinely scrolled before the app re-renders it.
+            btn = btns.nth(nb - 1)
             # Bring the row into view first, exactly as a user would: this keeps
             # the driver's own scroll out of the measurement so the assertion
             # covers the app's re-render behavior only.
@@ -332,7 +342,17 @@ def register(B, IMG):
 
     @S("F09-empty-message", "findings", 1.5)
     async def _(b):
-        await select_by_name(b, "blank.png")
+        # Import and select by the returned content id.  Registry deduplication
+        # preserves the first filename, so a display-name lookup can resolve
+        # to an old fixture after a prior benchmark run.
+        note = await _note(b, IMG["blank"])
+        sid = await import_note_id(b)
+        if not sid:
+            raise RuntimeError(f"blank fixture import did not return an id: {note}")
+        await select_by_value(b, sid)
+        await b.page.wait_for_function(
+            "() => /no findings|no overlay findings/.test(document.querySelector('#findings').textContent || '')",
+            timeout=15000)
         body = await b.page.text_content("#findings")
         return [check("empty-shown", "no " in body.lower(), body[:80])]
 
@@ -384,7 +404,10 @@ def register(B, IMG):
         await import_file(b.page, tmp)
         await b.page.wait_for_function(
             "() => document.querySelector('#import-note').textContent.length > 0", timeout=30000)
-        await select_by_name(b, "bench_r06.png")
+        sid = await import_note_id(b)
+        if not sid:
+            raise RuntimeError("unconfirmed fixture import did not return an id")
+        await select_by_value(b, sid)
         await b.page.click("#synthesize")
         await b.page.wait_for_timeout(4000)
         txt = await b.job_text()
@@ -545,7 +568,10 @@ def register(B, IMG):
         await import_file(b.page, tmp)
         await b.page.wait_for_function(
             "() => document.querySelector('#import-note').textContent.length > 0", timeout=30000)
-        await select_by_name(b, "bench_w02.png")
+        sid = await import_note_id(b)
+        if not sid:
+            raise RuntimeError("sign-off fixture import did not return an id")
+        await select_by_value(b, sid)
         await b.page.click("#signoff")
         await b.page.wait_for_timeout(2000)
         txt = await b.page.text_content("#review-out")

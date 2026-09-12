@@ -446,11 +446,13 @@ def create_app() -> Any:
         for key in terminal[: max(0, len(terminal) + 1 - 128)]:
             del jobs[key]
 
-    def _start_job(fn: Any, *args: Any) -> str:
+    def _start_job(fn: Any, *args: Any, metadata: dict[str, Any] | None = None) -> str:
         job_id = uuid.uuid4().hex[:12]
         with lock:
             _evict_jobs()
             jobs[job_id] = {"id": job_id, "state": "queued", "progress": 0.0}
+            if metadata:
+                jobs[job_id].update(metadata)
         worker = threading.Thread(target=fn, args=(job_id, *args), daemon=True)
         with lock:
             jobs[job_id]["state"] = "running"
@@ -595,7 +597,7 @@ def create_app() -> Any:
     def v1_synthesize(specimen_id: str) -> Any:
         from scripts import v1_findings as findings
         from scripts import v1_retrieve as retrieval
-        from scripts.phase5_packet import build_packet
+        from scripts.phase5_packet import build_packet, canonical_bytes
 
         directory = _v1_dir(specimen_id)
         if not (directory / "vision.json").is_file():
@@ -611,6 +613,19 @@ def create_app() -> Any:
                 ["image-level-only", "no-patient-linkage"])
         except (ValueError, OSError, retrieval.RetrievalError) as exc:
             raise HTTPException(status_code=409, detail=str(exc))
+
+        packet_sha256 = sha256_bytes(canonical_bytes(packet))
+        # A browser reload loses its polling timer while the worker keeps
+        # running.  Reusing an identical active job makes a subsequent user
+        # click attach to that work instead of submitting a concurrent
+        # llama-server request (which can otherwise fail with HTTP 500).
+        with lock:
+            for active_id, active in jobs.items():
+                if (active.get("kind") == "v1-synthesis"
+                        and active.get("specimen_id") == specimen_id
+                        and active.get("packet_sha256") == packet_sha256
+                        and active.get("state") in ("queued", "running")):
+                    return {"job_id": active_id}
 
         def worker(job_id: str) -> None:
             from scripts.phase5_synthesize import (
@@ -638,7 +653,9 @@ def create_app() -> Any:
                     jobs[job_id].update({"state": "failed",
                                          "error": f"{type(exc).__name__}: {exc}"})
 
-        return {"job_id": _start_job(worker)}
+        return {"job_id": _start_job(
+            worker, metadata={"kind": "v1-synthesis", "specimen_id": specimen_id,
+                              "packet_sha256": packet_sha256})}
 
     @app.post("/api/v1/signoff/{specimen_id}")
     def v1_signoff(specimen_id: str, body: dict[str, Any]) -> Any:
