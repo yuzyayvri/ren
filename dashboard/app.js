@@ -87,12 +87,15 @@ async function loadSpecimens() {
   S.specimens = await api("/api/specimens?limit=200");
   const sel = $("specimens");
   sel.innerHTML = "";
-  S.specimens.forEach((s, i) => {
+  S.specimens.forEach((s) => {
     const o = document.createElement("option");
-    o.value = i; o.textContent = `${s.source}: ${s.name}`;
+    o.value = s.id; o.textContent = `${s.source}: ${s.name}`;
     sel.appendChild(o);
   });
-  sel.onchange = () => loadIndex(+sel.value);
+  sel.onchange = () => {
+    const at = S.specimens.findIndex((s) => s.id === sel.value);
+    loadIndex(at >= 0 ? at : 0);
+  };
   loadIndex(0);
 }
 $("prev").addEventListener("click", () => step(-1));
@@ -100,7 +103,7 @@ $("next").addEventListener("click", () => step(1));
 $("overlay-toggle").addEventListener("click", toggleOverlay);
 function step(d) {
   const n = (S.index + d + S.specimens.length) % S.specimens.length;
-  $("specimens").value = n; loadIndex(n);
+  $("specimens").value = S.specimens[n].id; loadIndex(n);
 }
 async function loadIndex(i) {
   S.index = i;
@@ -237,7 +240,7 @@ $("import-file").addEventListener("change", async () => {
     $("import-note").textContent = `imported ${r.specimen_id}`;
     await loadSpecimens();
     const at = S.specimens.findIndex((s) => s.id === r.specimen_id);
-    if (at >= 0) { $("specimens").value = at; loadIndex(at); }
+    if (at >= 0) { $("specimens").value = r.specimen_id; loadIndex(at); }
   } catch (e) { $("import-note").textContent = `import failed`; }
 });
 $("analyze").addEventListener("click", analyzeSpecimen);

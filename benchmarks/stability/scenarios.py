@@ -7,16 +7,16 @@ from bench import check
 def register(B, IMG):
     S = B.scenario
 
-    async def select_sub(b, sub, timeout=15000):
+    async def select_by_value(b, sid, timeout=15000):
         await b.page.wait_for_function(
             f"""() => [...document.querySelectorAll('#specimens option')]
-                .some(o => (o.textContent || '').includes('{sub}'))""",
+                .some(o => o.value === '{sid}')""",
             timeout=timeout)
-        idx = await b.page.evaluate(
-            f"""() => [...document.querySelectorAll('#specimens option')]
-                .findIndex(o => (o.textContent || '').includes('{sub}'))""")
-        await b.page.select_option("#specimens", index=idx)
+        await b.page.select_option("#specimens", value=sid)
         await b.page.wait_for_timeout(800)
+        label = await b.page.text_content("#specimen-label")
+        if sid not in (label or ""):
+            raise RuntimeError(f"selection did not land on {sid}: {label[:60]}")
 
     async def select_by_name(b, name, timeout=15000):
         await b.page.wait_for_function(
@@ -46,7 +46,7 @@ def register(B, IMG):
             "() => /imported [0-9a-f]{12}/.test(document.querySelector('#import-note').textContent || '')",
             timeout=30000)
         sid = await import_note_id(b)
-        await select_sub(b, sid)
+        await select_by_value(b, sid)
         try:
             await b.wait_findings(timeout=15000)
         except Exception:  # noqa: BLE001 - analyze when nothing rendered yet
@@ -190,7 +190,7 @@ def register(B, IMG):
         await b.page.wait_for_function(
             "() => document.querySelector('#import-note').textContent.length > 0", timeout=30000)
         sid = await import_note_id(b)
-        await select_sub(b, sid)
+        await select_by_value(b, sid)
         st = await _analyze_current(b)
         body = await b.page.text_content("#findings")
         n = await b.findings_count()
@@ -199,7 +199,6 @@ def register(B, IMG):
 
     @S("V03-reanalyze-stable", "vision", 2)
     async def _(b):
-        await select_sub(b, (await import_note_id(b)) or "")
         n0 = await b.findings_count()
         st = await _analyze_current(b)
         n1 = await b.findings_count()
@@ -253,15 +252,26 @@ def register(B, IMG):
 
     @S("F03-bulk-approve", "findings", 1.5)
     async def _(b):
+        from bench import import_file
+        await import_file(b.page, IMG["txl_real2"])
+        await b.page.wait_for_function(
+            "() => document.querySelector('#import-note').textContent.length > 0", timeout=30000)
+        await select_by_name(b, IMG["txl_real2"].name)
+        await b.page.click("#analyze")
+        await b.page.wait_for_function(
+            "() => document.querySelectorAll('#findings .ev').length > 0", timeout=240000)
         await b.page.click("#mode-auto")
-        try:
-            await b.page.wait_for_selector("#approve-all", timeout=10000)
-        except Exception:  # noqa: BLE001 - nothing left unreviewed is a pass
-            return [check("nothing-pending", True, "")]
+        await b.page.wait_for_selector("#approve-all", timeout=15000)
         await b.page.click("#approve-all")
-        await b.page.wait_for_timeout(3000)
+        await b.page.wait_for_function(
+            "() => (document.querySelector('#st-job').textContent || '').includes('auto-approved')",
+            timeout=30000)
         txt = await b.page.text_content("#st-job")
-        return [check("bulk-ran", "auto-approved" in txt or "approved" in txt, txt[:80])]
+        left = await b.page.evaluate(
+            "() => [...document.querySelectorAll('#findings .ev')]"
+            ".filter(e => (e.textContent || '').includes('unreviewed')).length")
+        return [check("bulk-ran", "auto-approved" in txt, txt[:80]),
+                check("none-unreviewed", left == 0, left)]
 
     @S("F04-mode-switch", "findings", 1.5)
     async def _(b):
@@ -306,7 +316,7 @@ def register(B, IMG):
 
     @S("F09-empty-message", "findings", 1)
     async def _(b):
-        await select_sub(b, "blank")
+        await select_by_name(b, "blank.png")
         body = await b.page.text_content("#findings")
         return [check("empty-shown", "no " in body.lower(), body[:80])]
 
@@ -419,6 +429,7 @@ def register(B, IMG):
 
     @S("Y03-repeat-works", "synthesis", 1.5)
     async def _(b):
+        await prepared_v1(b)
         job, note = await synth_done(b)
         return [check("done-again", "done" in job, job[:80]),
                 check("note-again", len(note) > 100, len(note))]
@@ -440,6 +451,7 @@ def register(B, IMG):
 
     @S("Y06-fail-then-retry", "synthesis", 1)
     async def _(b):
+        await prepared_v1(b)
         job, note = await synth_done(b)
         return [check("retry-ok", "done" in job, job[:80])]
 
@@ -462,6 +474,7 @@ def register(B, IMG):
 
     @S("P02-origin-rank-shown", "provenance", 1.5)
     async def _(b):
+        await prepared_v1(b)
         html = await b.page.inner_html("#evidence")
         return [check("evidence-visible", len(html) > 50, len(html))]
 

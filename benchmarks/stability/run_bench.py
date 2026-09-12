@@ -67,6 +67,7 @@ def main() -> int:
                     imgs = make_images(tmp)
                     txl = sorted((ROOT / "data/blood/txl-pbc/TXL-PBC/images/val").glob("*.png"))
                     imgs["txl_real"] = txl[1]
+                    imgs["txl_real2"] = txl[2]
                     page = await browser.new_page(viewport={"width": 1440, "height": 900})
                     hosts: set[str] = set()
 
