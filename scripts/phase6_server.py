@@ -697,34 +697,58 @@ def create_app() -> Any:
         from scripts import v1_retrieve as retrieval
         from scripts.phase5_packet import build_packet, canonical_bytes, packet_digest
 
-        directory = _v1_dir(specimen_id)
-        synthesis_path = directory / "synthesis.json"
-        if not synthesis_path.is_file():
-            raise HTTPException(status_code=409, detail="nothing synthesized to sign")
-        synthesis = json.loads(synthesis_path.read_text(encoding="utf-8"))
-        if synthesis.get("status") != "ok" or "validated" not in synthesis:
-            raise HTTPException(status_code=409, detail="no valid synthesis to sign")
-        synthesis_packet_sha = packet_digest(synthesis["packet"])
-        if synthesis.get("packet_sha256") not in (None, synthesis_packet_sha):
-            raise HTTPException(status_code=409, detail="synthesis packet identity is invalid")
-        current = build_packet(
-            f"v1-{specimen_id}", "phase3-txl",
-            findings.to_packet_findings(findings.confirmed_findings(directory)),
-            retrieval.to_packet_context(directory),
-            ["image-level-only", "no-patient-linkage"])
-        if sha256_bytes(canonical_bytes(current)) != synthesis_packet_sha:
-            raise HTTPException(status_code=409,
-                                detail="findings or evidence changed since synthesis; re-synthesize")
-        record = {"schema": "v1-signoff-v1", "specimen_id": specimen_id,
-                  "packet_sha256": synthesis_packet_sha,
-                  "note_sha256": sha256_bytes(synthesis["note"].encode()),
-                  "reviewer": body.get("reviewer", "local"),
-                  "note": body.get("note"), "unix_time": time.time()}
-        (directory / "signoff.json").write_text(
-            json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        with (directory / "signoffs.jsonl").open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, sort_keys=True) + "\n")
-        return record
+        # Sign-off is a durable state transition.  Serialize validation and
+        # persistence together so two browser clicks cannot both observe an
+        # unsigned packet and append duplicate records.
+        with lock:
+            directory = _v1_dir(specimen_id)
+            synthesis_path = directory / "synthesis.json"
+            if not synthesis_path.is_file():
+                raise HTTPException(status_code=409, detail="nothing synthesized to sign")
+            synthesis = json.loads(synthesis_path.read_text(encoding="utf-8"))
+            if synthesis.get("status") != "ok" or "validated" not in synthesis:
+                raise HTTPException(status_code=409, detail="no valid synthesis to sign")
+            synthesis_packet_sha = packet_digest(synthesis["packet"])
+            if synthesis.get("packet_sha256") not in (None, synthesis_packet_sha):
+                raise HTTPException(status_code=409, detail="synthesis packet identity is invalid")
+            current = build_packet(
+                f"v1-{specimen_id}", "phase3-txl",
+                findings.to_packet_findings(findings.confirmed_findings(directory)),
+                retrieval.to_packet_context(directory),
+                ["image-level-only", "no-patient-linkage"])
+            if sha256_bytes(canonical_bytes(current)) != synthesis_packet_sha:
+                raise HTTPException(status_code=409,
+                                    detail="findings or evidence changed since synthesis; re-synthesize")
+            note_sha = sha256_bytes(synthesis["note"].encode())
+            signoff_path = directory / "signoff.json"
+            if signoff_path.is_file():
+                try:
+                    existing = json.loads(signoff_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    existing = None
+                if (isinstance(existing, dict)
+                        and existing.get("packet_sha256") == synthesis_packet_sha
+                        and existing.get("note_sha256") == note_sha):
+                    # Older records predate signoff_id; make the replay
+                    # identity explicit without appending another effect.
+                    existing.setdefault(
+                        "signoff_id",
+                        sha256_bytes(f"v1-signoff:{specimen_id}:{synthesis_packet_sha}".encode())[:12])
+                    signoff_path.write_text(
+                        json.dumps(existing, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                    return existing
+            record = {"schema": "v1-signoff-v1", "specimen_id": specimen_id,
+                      "signoff_id": sha256_bytes(
+                          f"v1-signoff:{specimen_id}:{synthesis_packet_sha}".encode())[:12],
+                      "packet_sha256": synthesis_packet_sha,
+                      "note_sha256": note_sha,
+                      "reviewer": body.get("reviewer", "local"),
+                      "note": body.get("note"), "unix_time": time.time()}
+            signoff_path.write_text(
+                json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            with (directory / "signoffs.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, sort_keys=True) + "\n")
+            return record
 
     @app.get("/api/v1/export/{specimen_id}")
     def v1_export(specimen_id: str) -> Any:
@@ -737,6 +761,9 @@ def create_app() -> Any:
         bundle["reviews"] = [json.loads(line) for line in
                              (directory / "reviews.jsonl").read_text(encoding="utf-8").splitlines()
                              if line.strip()] if (directory / "reviews.jsonl").is_file() else []
+        bundle["signoffs"] = [json.loads(line) for line in
+                               (directory / "signoffs.jsonl").read_text(encoding="utf-8").splitlines()
+                               if line.strip()] if (directory / "signoffs.jsonl").is_file() else []
         return JSONResponse(bundle)
 
     @app.post("/api/reviews")

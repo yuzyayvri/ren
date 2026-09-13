@@ -268,9 +268,15 @@ async function loadIndex(i) {
   }
   if (!isCurrent()) return;
   fitView();
-  // A page reload clears in-memory state but preserves the active job token
-  // in sessionStorage. Reattach the UI after this specimen has loaded.
-  if (S.isV1) void resumeV1Job(spec.id);
+  if (S.isV1) {
+    // Evidence is durable v1 state, not just the result of the last click.
+    // Restore it before reattaching any active synthesis job so a reload does
+    // not leave the browser showing a blank evidence panel.
+    await restoreV1Evidence(spec.id);
+    // A page reload clears in-memory state but preserves the active job token
+    // in sessionStorage. Reattach the UI after this specimen has loaded.
+    void resumeV1Job(spec.id);
+  }
 }
 function renderFindings(counts) {
   const el = $("findings");
@@ -460,20 +466,35 @@ async function autoRetrieveQuiet() {
   })();
   return S.autoRetrievePromise;
 }
-async function v1RetrieveAll(id = S.specimens[S.index].id) {
-  const r = await api(`/api/v1/retrieve/${id}`, {method: "POST"});
+
+function renderV1Evidence(id, sets, source = "automatic") {
   if (S.specimens[S.index]?.id !== id) return;
-  $("evidence").innerHTML =
-    `<div class="dim">automatic derivation (v1-query-derivation-v1), ${r.evidence} items</div>` +
-    Object.entries(r.sets || {}).map(([fid, g]) =>
-      `<div class="ev" data-fid="${escapeHtml(fid)}" data-query="${escapeHtml(g.query)}"><span class="mono">${escapeHtml(fid)}</span> <span class="dim">query: ${escapeHtml(g.query)}</span><br>` +
-      g.evidence.map((e) => {
-        const excluded = (g.excluded || []).some((x) => x.evidence_id === e.evidence_id);
-        const origin = e.origin || `auto-${g.rule}`;
-        return `<label><input type="checkbox" data-v1-evidence data-fid="${escapeHtml(fid)}" data-eid="${escapeHtml(e.evidence_id)}" data-origin="${escapeHtml(origin)}" data-rank="${escapeHtml(e.rank)}" ${excluded ? "" : "checked"}>` +
-          ` <span class="mono">${escapeHtml(e.evidence_id)}</span> ${escapeHtml(e.go_id)} <span class="dim">[auto] origin: ${escapeHtml(origin)}; rank: ${escapeHtml(e.rank)}</span></label>`;
-      }).join("<br>") +
-      `</div>`).join("");
+  const groups = Object.entries(sets || {});
+  const entries = groups.flatMap(([, group]) => [
+    ...(group.evidence || []), ...(group.manual_adds || []),
+  ]);
+  S.evidence = entries;
+  const count = entries.length;
+  const header = source === "automatic"
+    ? `automatic derivation (v1-query-derivation-v1), ${count} items`
+    : `persisted automatic derivation, ${count} items`;
+  $("evidence").innerHTML = `<div class="dim">${header}</div>` +
+    groups.map(([fid, g]) => {
+      const groupEntries = [...(g.evidence || []), ...(g.manual_adds || [])];
+      const excluded = new Set((g.excluded || []).map((x) => x.evidence_id));
+      return `<div class="ev" data-fid="${escapeHtml(fid)}" data-query="${escapeHtml(g.query)}">` +
+        `<span class="mono">${escapeHtml(fid)}</span> <span class="dim">query: ${escapeHtml(g.query)}</span><br>` +
+        groupEntries.map((e) => {
+          const isManual = String(e.origin || "").startsWith("human:");
+          const origin = e.origin || (isManual ? "human:unknown" : `auto-${g.rule}`);
+          const marker = isManual ? "[manual]" : "[auto]";
+          const checked = excluded.has(e.evidence_id) ? "" : "checked";
+          return `<label><input type="checkbox" data-v1-evidence data-fid="${escapeHtml(fid)}" data-eid="${escapeHtml(e.evidence_id)}" data-go-id="${escapeHtml(e.go_id)}" data-origin="${escapeHtml(origin)}" data-rank="${escapeHtml(e.rank)}" data-query="${escapeHtml(e.query || g.query)}" ${checked}>` +
+            ` <span class="mono">${escapeHtml(e.evidence_id)}</span> ${escapeHtml(e.go_id)} ${escapeHtml(e.name || "")} <span class="dim">${marker} origin: ${escapeHtml(origin)}; rank: ${escapeHtml(e.rank)}</span>` +
+            (e.definition ? `<div class="dim">${escapeHtml(e.definition.slice(0, 160))}${e.definition.length > 160 ? "…" : ""}</div>` : "") +
+            `</label>`;
+        }).join("<br>") + `</div>`;
+    }).join("");
   document.querySelectorAll("#evidence input[data-v1-evidence]").forEach((box) => {
     box.addEventListener("change", async () => {
       const op = box.checked ? "include" : "exclude";
@@ -488,6 +509,22 @@ async function v1RetrieveAll(id = S.specimens[S.index].id) {
       } finally { box.disabled = false; }
     });
   });
+}
+
+async function restoreV1Evidence(id) {
+  try {
+    const bundle = await api(`/api/v1/export/${id}`);
+    if (S.specimens[S.index]?.id !== id || !bundle.evidence) return;
+    const hasEvidence = Object.values(bundle.evidence).some((group) =>
+      (group.evidence || []).length || (group.manual_adds || []).length);
+    if (hasEvidence) renderV1Evidence(id, bundle.evidence, "persisted");
+  } catch { /* an unanalyzed specimen has no persisted evidence to restore */ }
+}
+
+async function v1RetrieveAll(id = S.specimens[S.index].id) {
+  const r = await api(`/api/v1/retrieve/${id}`, {method: "POST"});
+  if (S.specimens[S.index]?.id !== id) return;
+  renderV1Evidence(id, r.sets || {}, "automatic");
 }
 async function v1Synthesize(id = S.specimens[S.index].id) {
   const token = ++S.jobToken;

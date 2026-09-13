@@ -168,9 +168,13 @@ def test_v1_synthesize_and_signoff_guards(client, monkeypatch):
         signoff = client.post(f"/api/v1/signoff/{specimen_id}",
                               json={"reviewer": "t"}).json()
         assert signoff["reviewer"] == "t" and signoff["packet_sha256"]
+        replay = client.post(f"/api/v1/signoff/{specimen_id}",
+                             json={"reviewer": "different"}).json()
+        assert replay == signoff
         export = client.get(f"/api/v1/export/{specimen_id}").json()
         assert export["schema"] == "v1-export-v1"
         assert export["signoff"]["reviewer"] == "t"
+        assert export["signoffs"] == [signoff]
         assert len(export["reviews"]) == 1
     finally:
         shutil.rmtree(directory)
@@ -180,7 +184,8 @@ def test_frontend_v1_wiring_present():
     text = (ROOT / "dashboard" / "app.js").read_text()
     for token in ("import-file", "v1RetrieveAll", "v1Synthesize", "export-btn",
                   "/api/v1/signoff", "S.highlight", "boxCodes", "claim-hit",
-                  "resumeV1Job", "sessionStorage", "prov-file", "prov-digest"):
+                  "resumeV1Job", "restoreV1Evidence", "renderV1Evidence",
+                  "sessionStorage", "prov-file", "prov-digest"):
         assert token in text
 
 

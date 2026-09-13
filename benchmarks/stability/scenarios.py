@@ -75,6 +75,39 @@ def register(B, IMG):
                 st_job: document.querySelector('#st-job')?.textContent || ''
             })""")
 
+    async def rendered_v1_evidence(b):
+        return await b.page.evaluate(
+            """() => ({
+                groups: [...document.querySelectorAll('#evidence .ev[data-fid]')]
+                    .map(e => ({fid: e.dataset.fid || '', query: e.dataset.query || ''})),
+                entries: [...document.querySelectorAll('#evidence input[data-v1-evidence]')]
+                    .map(e => ({fid: e.dataset.fid || '', eid: e.dataset.eid || '',
+                                go_id: e.dataset.goId || '', origin: e.dataset.origin || '',
+                                rank: Number(e.dataset.rank), query: e.dataset.query || '',
+                                checked: !!e.checked,
+                                text: e.parentElement?.textContent || ''}))
+            })""")
+
+    def exported_v1_evidence_rows(bundle):
+        rows = []
+        groups = bundle.get("evidence", {}) if isinstance(bundle, dict) else {}
+        for fid, group in groups.items():
+            excluded = {entry.get("evidence_id") for entry in group.get("excluded", [])}
+            for entry in [*(group.get("evidence", []) or []),
+                          *(group.get("manual_adds", []) or [])]:
+                origin = entry.get("origin") or (
+                    f"auto-{group.get('rule')}" if entry in group.get("evidence", [])
+                    else "human:unknown")
+                rows.append({
+                    "fid": fid, "eid": entry.get("evidence_id"),
+                    "go_id": entry.get("go_id"), "origin": origin,
+                    "rank": entry.get("rank"),
+                    "query": entry.get("query") or group.get("query", ""),
+                    "checked": entry.get("evidence_id") not in excluded,
+                    "name": entry.get("name", ""),
+                })
+        return rows
+
     def independent_sealed_digests():
         # Keep the file names explicit here: the benchmark computes these
         # digests independently of the dashboard's provenance response.
@@ -755,39 +788,77 @@ def register(B, IMG):
         automatic_entries = [entry for group in automatic.get("evidence", {}).values()
                              for entry in group.get("evidence", [])]
         automatic_ids = [entry.get("go_id") for entry in automatic_entries]
-        await b.page.fill("#query", "leukocyte")
-        await b.page.click("#retrieve")
-        await b.page.wait_for_function(
-            "() => S.lastRetrieval?.query === 'leukocyte' && "
-            "(document.querySelector('#evidence').textContent || '').includes('rank order preserved')",
-            timeout=30000)
+        async def manual_query(query):
+            await b.page.fill("#query", query)
+            await b.page.click("#retrieve")
+            await b.page.wait_for_function(
+                "q => S.lastRetrieval?.query === q && "
+                "(document.querySelector('#evidence').textContent || '').includes('rank order preserved')",
+                arg=query, timeout=30000)
+            response = await b.page.evaluate("() => S.lastRetrieval")
+            shown = await b.page.eval_on_selector_all(
+                "#evidence .ev[data-go-id]",
+                "els => els.map(e => ({go_id: e.dataset.goId, rank: Number(e.dataset.rank), "
+                "query: e.dataset.query, text: e.textContent || ''}))")
+            entries = (response or {}).get("entries", [])
+            bound = (len(shown) == len(entries[:8])
+                     and all(row["go_id"] == entry.get("go_id")
+                             and row["rank"] == entry.get("rank")
+                             and row["query"] == entry.get("query")
+                             and entry.get("name", "") in row["text"]
+                             and entry.get("definition", "")[:160] in row["text"]
+                             for entry, row in zip(entries[:8], shown)))
+            return response, shown, bound
+
+        first, first_shown, first_bound = await manual_query("leukocyte")
+        second, second_shown, second_bound = await manual_query("platelet")
+        third, third_shown, third_bound = await manual_query("leukocyte")
         html = await b.page.inner_html("#evidence")
         query = await b.page.input_value("#query")
-        retrieval = await b.page.evaluate("() => S.lastRetrieval")
-        shown = await b.page.eval_on_selector_all(
-            "#evidence .ev[data-go-id]",
-            "els => els.map(e => ({go_id: e.dataset.goId, rank: Number(e.dataset.rank), query: e.dataset.query, text: e.textContent || ''}))")
-        manual_entries = (retrieval or {}).get("entries", [])
-        shown_bound = (len(shown) == len(manual_entries[:8])
-                       and all(row["go_id"] == entry.get("go_id")
-                               and row["rank"] == entry.get("rank")
-                               and row["query"] == entry.get("query")
-                               and entry.get("name", "") in row["text"]
-                               and entry.get("definition", "")[:160] in row["text"]
-                               for entry, row in zip(manual_entries[:8], shown)))
-        manual_ids = [entry.get("go_id") for entry in manual_entries]
-        causal = (retrieval and retrieval.get("query") == "leukocyte"
-                  and manual_entries and all(entry.get("query") == "leukocyte"
-                                             and entry.get("go_id")
-                                             and entry.get("name") and entry.get("definition")
-                                             for entry in manual_entries)
+        first_entries = (first or {}).get("entries", [])
+        second_entries = (second or {}).get("entries", [])
+        third_entries = (third or {}).get("entries", [])
+        # Compare the complete content fields while ignoring only the query
+        # string: two different echoed labels are not proof that retrieval
+        # used the input.  The returned term identities and definitions must
+        # change with the query.
+        def content(response):
+            return {"mode": response.get("mode"), "entries": [
+                {key: entry.get(key) for key in ("go_id", "name", "definition", "rank", "mode")}
+                for entry in response.get("entries", [])]}
+
+        content_differs = canonical(content(first)) != canonical(content(second))
+        same_query_content = canonical(first) == canonical(third)
+        ids_differ = {entry.get("go_id") for entry in first_entries} != {
+            entry.get("go_id") for entry in second_entries}
+        manual_ids = [entry.get("go_id") for entry in second_entries]
+        causal = (first and second and third
+                  and first.get("query") == "leukocyte"
+                  and second.get("query") == "platelet"
+                  and first_entries and second_entries
+                  and all(entry.get("query") == "leukocyte" for entry in first_entries)
+                  and all(entry.get("query") == "platelet" for entry in second_entries)
+                  and all(entry.get("query") == "leukocyte" for entry in third_entries)
+                  and all(entry.get("go_id") and entry.get("name") and entry.get("definition")
+                          for entry in [*first_entries, *second_entries, *third_entries])
+                  and content_differs
+                  and same_query_content
+                  and ids_differ
                   and set(manual_ids) != set(automatic_ids)
-                  and shown_bound
+                  and first_bound and second_bound and third_bound
                   and "automatic derivation" not in html)
         return [check("manual-results-replace-auto", causal,
-                       {"automatic_ids": automatic_ids, "manual": manual_entries,
-                        "shown": shown, "html": html[:160]}),
-                check("query-retained", query == "leukocyte", query)]
+                       {"automatic_ids": automatic_ids, "first": first,
+                        "second": second, "first_shown": first_shown,
+                        "second_shown": second_shown, "third": third,
+                        "third_shown": third_shown, "content_differs": content_differs,
+                        "same_query_content": same_query_content,
+                        "ids_differ": ids_differ,
+                        "html": html[:160]}),
+                check("query-retained", query == "leukocyte"
+                      and first.get("query") == "leukocyte"
+                      and second.get("query") == "platelet"
+                      and third.get("query") == "leukocyte", query)]
 
     @S("R05-retry-same", "retrieval", 1)
     async def _(b):
@@ -930,23 +1001,57 @@ def register(B, IMG):
     @S("E04-refresh-persists", "evidence", 1)
     async def _(b):
         sid = await prepared_v1(b, "txl_e04")
-        before = await b.page.eval_on_selector_all("#evidence .ev[data-fid]", "els => els.length")
+        exclusion = b.page.locator("#evidence input[data-v1-evidence]").first
+        if await exclusion.count() == 0 or not await exclusion.is_checked():
+            raise RuntimeError("prepared evidence has no included item to persist")
+        exclusion_fid = await exclusion.get_attribute("data-fid")
+        exclusion_eid = await exclusion.get_attribute("data-eid")
+        if not exclusion_fid or not exclusion_eid:
+            raise RuntimeError("prepared evidence exclusion target has no durable identity")
+        await exclusion.click()
+        await b.page.wait_for_function(
+            "target => fetch(`/api/v1/export/${target.sid}`).then(r => r.json()).then(bundle => "
+            "!!bundle.evidence?.[target.fid]?.excluded?.some(e => e.evidence_id === target.eid))",
+            arg={"sid": sid, "fid": exclusion_fid, "eid": exclusion_eid}, timeout=30000)
         bundle_before = await v1_export(b, sid)
+        rendered_before = await rendered_v1_evidence(b)
+        expected_before = exported_v1_evidence_rows(bundle_before)
+        actual_before = [{key: row[key] for key in ("fid", "eid", "go_id", "origin", "rank", "query", "checked")}
+                         for row in rendered_before["entries"]]
+        expected_projection_before = [
+            {key: row[key] for key in ("fid", "eid", "go_id", "origin", "rank", "query", "checked")}
+            for row in expected_before]
+        row_order = lambda row: (row["fid"], row["eid"])
+        if sorted(actual_before, key=row_order) != sorted(expected_projection_before, key=row_order):
+            raise RuntimeError("prepared evidence DOM is not bound to its persisted export")
         await b.page.reload(wait_until="networkidle")
         await b.page.wait_for_function("() => document.querySelectorAll('#specimens option').length > 5")
         await select_by_value(b, sid)
         bundle_after = await v1_export(b, sid)
-        after = sum(len(group.get("evidence", [])) for group in bundle_after.get("evidence", {}).values())
+        expected_after = exported_v1_evidence_rows(bundle_after)
+        await b.page.wait_for_function(
+            "expected => document.querySelectorAll('#evidence input[data-v1-evidence]').length === expected",
+            arg=len(expected_after), timeout=30000)
+        rendered_after = await rendered_v1_evidence(b)
+        actual_after = [{key: row[key] for key in ("fid", "eid", "go_id", "origin", "rank", "query", "checked")}
+                        for row in rendered_after["entries"]]
+        groups_expected = [{"fid": fid, "query": group.get("query", "")}
+                           for fid, group in bundle_after.get("evidence", {}).items()]
         options = await b.page.eval_on_selector_all("#specimens option", "els => els.length")
         return [check("reloaded", options > 5, options),
-                check("evidence-persisted", before > 0 and after > 0
-                      and bundle_before.get("specimen_id") == sid
-                      and bundle_after.get("specimen_id") == sid,
-                      (before, after, sid)),
-                check("evidence-content-persists",
-                      canonical(bundle_before.get("evidence")) == canonical(bundle_after.get("evidence")),
-                      {"before": bundle_before.get("evidence"),
-                       "after": bundle_after.get("evidence")})]
+                check("evidence-persisted", expected_after and
+                      bundle_before.get("specimen_id") == sid
+                      and bundle_after.get("specimen_id") == sid
+                      and canonical(bundle_before.get("evidence")) == canonical(bundle_after.get("evidence")),
+                      {"before": expected_before, "after": expected_after, "sid": sid}),
+                check("evidence-render-restored", sorted(actual_after, key=row_order) == sorted([
+                    {key: row[key] for key in ("fid", "eid", "go_id", "origin", "rank", "query", "checked")}
+                    for row in expected_after], key=row_order)
+                      and rendered_after["groups"] == groups_expected
+                      and all(row["name"] in next(actual["text"] for actual in rendered_after["entries"]
+                                                    if actual["fid"] == row["fid"] and actual["eid"] == row["eid"])
+                              for row in expected_after),
+                      {"expected": expected_after, "actual": rendered_after})]
 
     # ---- synthesis (10) ----
     @S("Y01-normal-note", "synthesis", 2.5)
@@ -1339,18 +1444,46 @@ def register(B, IMG):
     async def _(b):
         await prepared_v1(b, "txl_w04")
         job, note = await synth_done(b)
-        await b.page.click("#signoff")
+        sid = await b.page.input_value("#specimens")
+        signoff_url = f"/api/v1/signoff/{sid}"
+        async with b.page.expect_response(
+                lambda response: signoff_url in response.url
+                and response.request.method == "POST" and response.status == 200,
+                timeout=30000) as first_response:
+            await b.page.click("#signoff")
         await b.page.wait_for_function(
             "() => (document.querySelector('#review-out').textContent || '').includes('signed off')",
             timeout=30000)
         first = await b.page.text_content("#review-out")
-        await b.page.click("#signoff")
+        first_record = await (await first_response.value).json()
+        export_before_repeat = await v1_export(b, sid)
+        if not export_before_repeat.get("signoffs"):
+            raise RuntimeError("first sign-off was not durably recorded")
+        async with b.page.expect_response(
+                lambda response: signoff_url in response.url
+                and response.request.method == "POST" and response.status == 200,
+                timeout=30000) as second_response:
+            await b.page.click("#signoff")
         await b.page.wait_for_function(
             "() => (document.querySelector('#review-out').textContent || '').includes('signed off')",
             timeout=30000)
         second = await b.page.text_content("#review-out")
+        second_record = await (await second_response.value).json()
+        export_after_repeat = await v1_export(b, sid)
+        history = export_after_repeat.get("signoffs", [])
+        stable_replay = (first_record.get("signoff_id")
+                         and first_record == second_record
+                         and export_before_repeat.get("signoff") == export_after_repeat.get("signoff")
+                         and len(history) == 1
+                         and history[0] == first_record
+                         and history[0].get("packet_sha256") == first_record.get("packet_sha256")
+                         and history[0].get("note_sha256") == first_record.get("note_sha256"))
         return [check("first-sign-succeeds", "signed off" in first.lower(), first[:80]),
-                check("repeat-sign-succeeds", "signed off" in second.lower() and "failed" not in second.lower(), second[:80])]
+                check("repeat-signoff-idempotent", "signed off" in second.lower()
+                      and "failed" not in second.lower() and stable_replay,
+                      {"first": first_record, "second": second_record,
+                       "before": export_before_repeat.get("signoffs"),
+                       "after": history})]
 
     @S("W05-provisional-marking", "review", 1)
     async def _(b):
@@ -1364,10 +1497,15 @@ def register(B, IMG):
     @S("A01-double-approve-race", "async", 2)
     async def _(b):
         await review_fixture(b, "txl_async")
+        before = await v1_export(b, await b.page.input_value("#specimens"))
+        sid = before.get("specimen_id")
         btn = b.page.locator("#findings button[data-act='confirm']").first
         if await btn.count() == 0:
             raise RuntimeError("review fixture has no confirm action")
         fid = await btn.get_attribute("data-fid")
+        before_target_reviews = [r for r in before.get("reviews", []) if r.get("finding_id") == fid]
+        if before_target_reviews:
+            raise RuntimeError("double-approve fixture already has a target review")
         await btn.dblclick()
         await b.page.wait_for_timeout(2500)
         await b.page.wait_for_function(
@@ -1375,8 +1513,20 @@ def register(B, IMG):
             timeout=30000)
         row = b.page.locator(f"#findings .ev[data-fid='{fid}']")
         state = await row.text_content() if await row.count() else ""
+        after = await v1_export(b, sid)
+        target_reviews = [r for r in after.get("reviews", []) if r.get("finding_id") == fid]
+        target_effects = [f for f in await v1_findings(b, sid) if f.get("finding_id") == fid]
+        durable_once = (len(after.get("reviews", [])) == len(before.get("reviews", [])) + 1
+                        and len(target_reviews) == 1
+                        and target_reviews[0].get("action") == "confirm"
+                        and target_reviews[0].get("review_id")
+                        and len(target_effects) == 1
+                        and target_effects[0].get("review_state") == "confirmed")
         return [check("double-approve-settled", await row.count() == 1 and "confirmed" in state.lower(), state[:120]),
-                check("finding-still-visible", await b.findings_count() > 0, await b.findings_count())]
+                check("finding-still-visible", await b.findings_count() > 0, await b.findings_count()),
+                check("single-durable-review-effect", durable_once,
+                      {"sid": sid, "fid": fid, "before": before_target_reviews,
+                       "after": target_reviews, "effective": target_effects})]
 
     @S("A02-navigate-mid-analysis", "async", 2)
     async def _(b):
@@ -1566,12 +1716,45 @@ def register(B, IMG):
 
     @S("G04-overlay-toggle", "edge", 0.5)
     async def _(b):
-        t0 = await b.page.text_content("#overlay-toggle")
+        options = await b.page.eval_on_selector_all(
+            "#specimens option", "els => els.map(e => e.value).filter(v => v.startsWith('txl-'))")
+        if not options:
+            raise RuntimeError("overlay toggle has no labeled specimen target")
+        sid = options[0]
+        await select_by_value(b, sid)
+        await b.page.wait_for_function(
+            "() => S.img && S.boxes && S.boxes.length > 0 && document.querySelector('#canvas').width > 0",
+            timeout=30000)
+        if not await b.page.evaluate("() => S.showOverlay"):
+            await b.page.click("#overlay-toggle")
+            await b.page.wait_for_function("() => S.showOverlay === true")
+        digest = """() => {
+            const c = document.querySelector('#canvas');
+            const data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+            let hash = 2166136261;
+            for (let i = 0; i < data.length; i += 4) {
+                hash ^= data[i]; hash = Math.imul(hash, 16777619);
+                hash ^= data[i + 1]; hash = Math.imul(hash, 16777619);
+                hash ^= data[i + 2]; hash = Math.imul(hash, 16777619);
+            }
+            return hash >>> 0;
+        }"""
+        on = await b.page.evaluate("() => ({shown: S.showOverlay, boxes: S.boxes.length})")
+        on["digest"] = await b.page.evaluate(digest)
         await b.page.click("#overlay-toggle")
-        await b.page.wait_for_timeout(500)
-        t1 = await b.page.text_content("#overlay-toggle")
+        await b.page.wait_for_function("() => S.showOverlay === false")
+        off = await b.page.evaluate("() => ({shown: S.showOverlay, boxes: S.boxes.length})")
+        off["digest"] = await b.page.evaluate(digest)
         await b.page.click("#overlay-toggle")
-        return [check("toggled", t0 != t1, (t0, t1))]
+        await b.page.wait_for_function("() => S.showOverlay === true")
+        restored = await b.page.evaluate("() => ({shown: S.showOverlay, boxes: S.boxes.length})")
+        restored["digest"] = await b.page.evaluate(digest)
+        rendered_change = (on["shown"] and not off["shown"] and restored["shown"]
+                           and on["boxes"] > 0 and off["boxes"] == on["boxes"]
+                           and on["digest"] != off["digest"]
+                           and restored["digest"] == on["digest"])
+        return [check("overlay-render-toggles", rendered_change,
+                      {"sid": sid, "on": on, "off": off, "restored": restored})]
 
     @S("G05-bad-api-id", "edge", 1)
     async def _(b):
