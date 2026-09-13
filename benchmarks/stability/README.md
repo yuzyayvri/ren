@@ -21,7 +21,7 @@ source /tmp/bench_env.sh
 The runner starts the dashboard backend and the MedGemma server itself,
 executes all scenarios, writes machine-readable
 `artifacts/benchmark_results/stability/results.json` plus a human
-`report.md`, captures screenshots only for failed scenarios, then tears
+`report.md`, captures screenshots only when a scenario crashes, then tears
 both servers down. Filter with `BENCH_ONLY=<substring>`.
 
 Each invocation also writes an authoritative run directory at
@@ -29,8 +29,10 @@ Each invocation also writes an authoritative run directory at
 results bind the score to the candidate commit, a tracked-source digest, the
 scenario selection, browser request evidence, and an asserted teardown
 postcondition. A filtered run is diagnostic only and exits nonzero; the
-release gate requires an unfiltered 69-scenario run with no failed browser
-requests, bad responses, skips, or crashes.
+release gate requires an unfiltered 69-scenario run with no unexpected failed
+browser requests, bad responses, skips, or crashes. The suite permits the one
+intentional expected S03 connection-refused request (`GET
+http://127.0.0.1:8099/`), which is recorded separately.
 
 ## Scoring
 
@@ -42,8 +44,8 @@ reweighting.
 
 ## Expected runtime
 
-Roughly 30–50 minutes for the full suite (vision analysis and MedGemma
-generation dominate). Results record per-scenario milliseconds.
+Roughly 20–25 minutes on the validated workstation (vision analysis and
+MedGemma generation dominate). Results record per-scenario milliseconds.
 
 ## Output
 
@@ -52,7 +54,16 @@ generation dominate). Results record per-scenario milliseconds.
 - `report.md`: human summary with run tag, candidate provenance, and partial/fail detail.
 - `runs/<run-tag>/`: immutable run-scoped manifest, log, progress, results,
   report, and screenshots.
-- `shots/`: screenshots copied only from the latest run's failures.
+- `shots/`: screenshots copied only from scenarios that crashed in the latest
+  run.
+
+### Latest independent release result
+
+Run `63ccc38b23c2` at candidate `68dd88a7ef2d7262945cbf51e09df861b2012221`
+passed independent verification: 69 scenarios, 167 checks, 100.0/100,
+unfiltered/source-bound, no unexpected browser failures or 5xx responses, and
+asserted teardown. See the populated checkout's
+`artifacts/benchmark_results/stability/release_verifier_6_final_verification.md`.
 
 ## Limitations
 

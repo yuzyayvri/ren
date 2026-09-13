@@ -247,7 +247,7 @@ models/vision/virchow/pytorch_model.bin   # 631M param checkpoint
 models/vision/virchow/config.json         # architecture + pretrained_cfg
 /tmp/virchow_state.pt                     # cached state_dict, 2.53 GB
 scripts/extract_embeddings.py             # model definition + virchow loader
-scripts/train_head.py                     # LogisticRegression head trainer (not yet run)
+scripts/train_head.py                     # LogisticRegression head trainer (run; results recorded below)
 ```
 
 ---
@@ -281,7 +281,8 @@ excellent smoke-test performance. Virchow files/results remain as the Phase 1
 audit reference but should not be wired into the final pipeline.
 - `scripts/train_head.py` — sklearn LogisticRegression on embeddings. Loads
   from `embeddings/{backbone}/{fold}/`, trains on folds 1+2, tests on fold 3.
-  Not yet run — waiting for all 3 folds of embeddings.
+  Historical waiting note; the head was subsequently run after all 3 folds were
+  extracted, with results recorded in the Phase 1 artifacts above.
 
 ---
 
@@ -670,7 +671,7 @@ all five gates: F1 0.744241, PQ 0.596561, macro-F1 0.569366, Dead recall
 0.436364, Dead F1 0.396899. Digest 9ba36ff4739b0358dd61f97bdf91d203e32acc5a94090e5d498eef788d195b80.
 No training/refitting/tuning; historical filter preserved; fold3 untouched.
 
-## Future MedCPT/MedGemma candidates and Phase 4 history (2026-09-09)
+## Historical MedCPT/MedGemma candidates and Phase 4 history (2026-09-09)
 
 Historical Phase 4 retrieval protocol v1 (2026-09-10): MedCPT query/article
 roles were selected and verified from local pinned manifests.
@@ -861,7 +862,7 @@ none crossed the rejection bar). Lifecycle event part3_accepted;
 report in artifacts/phase5_final_v1/. Phase 5 complete; dashboard
 remains Phase 6 work.
 
-## Ren v1.0.0 refinement (2026-09-11)
+## Historical Ren v1.0.0 refinement (2026-09-11)
 
 Shipped on branch yuzy/v1-refinement: M1 PNG/JPEG ingestion + registry
 (TXL files are JPEG despite .png names, accepted deliberately); M2
@@ -876,3 +877,17 @@ exempt) against the frozen 8192-token context; decoding n_predict raised
 1024->2048 as protocol v3. Open follow-up: proper opencv-headless
 packaging instead of the vision_python.sh lib shim.
 
+## Ren v1.0.0 browser stability certification (2026-09-13)
+
+The current release candidate is `yuzy/v1-bughunt` at
+`68dd88a7ef2d7262945cbf51e09df861b2012221` (PR #16 open; no merge). Independent
+headless-Firefox verification PASSed the fresh unfiltered run
+`63ccc38b23c2`: 69 scenarios, 167 checks, 100.0/100, source digest
+`60753bfddde2783fa18ab0af6a2c4939d0f84c8bd6d2a850284187a067fe3097`, zero
+crashes/skips/console errors/unexpected failed requests/5xx responses, one
+intentional expected S03 connection-refused request, and asserted teardown
+with 52 run-created specimens cleaned. Automatic finding-to-retrieval wiring
+and arbitrary blood-smear PNG/JPEG ingestion are implemented. True WSI,
+tissue production inference, and autonomous clinical calls remain out of scope.
+The certification binds to the implementation commit above; subsequent
+documentation-only commits are not part of that browser run.

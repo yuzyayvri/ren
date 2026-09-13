@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Fail-closed local verification for future MedCPT and MedGemma candidates."""
+"""Fail-closed local verification for selected MedCPT and MedGemma artifacts.
+
+The legacy ``future`` filename and command names are retained for workflow
+compatibility.
+"""
 from __future__ import annotations
 
 import argparse

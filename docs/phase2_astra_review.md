@@ -1,5 +1,10 @@
 # Phase 2 review packet — PanNuke nuclei
 
+> Historical pre-implementation review packet. The dependency, target,
+> training, and fold-3 blockers recorded below were accurate when this packet
+> was written and are retained for auditability; they are superseded by the
+> completed Phase 2 artifacts and one-shot fold-3 evaluation in `ROADMAP.md`.
+
 ## Decision requested
 
 Approve **HoVer-Net fast**, a separate trainable multi-head segmentation

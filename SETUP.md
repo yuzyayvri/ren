@@ -50,8 +50,8 @@ by the pinned recipe described below.
 just models-llm      # OpenBioLLM-8B + MedGemma 1.5 4B Q5_K_M, GGUF, for synthesis
 just models-vision    # Virchow + path-foundation, frozen ViT backbones for the vision stage
 just models-embed     # PubMedBERT, for the knowledge-retrieval embeddings
-just models-future-acquire  # pinned MedCPT + MedGemma acquisition
-just models-future-verify    # offline MedCPT + ephemeral llama.cpp checks
+just models-future-acquire  # selected MedCPT + MedGemma acquisition (legacy recipe name)
+just models-future-verify    # offline selected-model checks (legacy recipe name)
 just data-blood       # clones TXL-PBC (PBC + Raabin-WBC, YOLO-labeled, no account needed)
 just data-tissue      # PanNuke — the one dataset here with no auth wall
 ```
@@ -97,16 +97,18 @@ just serve-dashboard
 
 This serves the Phase 6 workstation loopback-only (default
 `http://127.0.0.1:8081`, override with `just serve-dashboard 8090`).
-Keep `just serve-llm` running in another shell if you want note
-generation; everything else, including specimen viewing, overlays,
-retrieval, and review, works without it.
+Keep `just serve-llm` running in another shell for note generation, or use the
+dashboard's synthesis toggle to start and stop the local MedGemma server;
+everything else, including specimen viewing, overlays, retrieval, and review,
+works without it.
 
 ## Why two backends at all
 
 Vulkan handles every GGUF/llama.cpp model in the pipeline — no ROCm, no gfx
 override, nothing card-specific to fight with. ROCm only re-enters the
 picture because PyTorch doesn't have a real Vulkan backend, and the vision
-engine needs PyTorch to run Virchow/UNI and train the classification head
+engine needs PyTorch to run the frozen Path Foundation/Virchow backbones and
+train the classification head
 on top. Given that head is small (frozen encoder, you're only training a
 thin layer), CPU is a legitimate fallback if the gfx1032 override gives you
 grief — worth trying before sinking time into it.
@@ -119,6 +121,7 @@ Q5_K_M GGUF. It is idempotent and resumable; rerun after interruption. Use
 --update on scripts/acquire_future_models.py only when intentionally changing
 revisions. The verification recipe disables network for MedCPT, runs its paired
 retrieval smoke test, then starts and stops a local llama.cpp process at context
-8192 for one text-only generation. MedCPT remains a future retrieval candidate;
-MedGemma is the Phase 5 synthesis candidate paired with OpenBioLLM pending the
-comparison, so neither model is a selected production winner yet.
+8192 for one text-only generation. MedCPT is the accepted Phase 4 retrieval
+encoder pair; MedGemma is the accepted frozen Phase 5/v1 production synthesis
+winner. OpenBioLLM remains an audit-only comparison copy and is not the default
+server model.

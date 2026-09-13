@@ -61,7 +61,8 @@
         };
 
         # Only for the vision-engine path: extracting features from a frozen
-        # ViT (Virchow/UNI) and training the small classification head on top.
+        # ViT (Path Foundation/Virchow) and training the small classification
+        # head on top.
         # PyTorch has no real Vulkan backend, so this is where ROCm comes back.
         devShells.rocm = pkgs.mkShell {
           packages = commonPkgs ++ (with pkgs.rocmPackages; [
