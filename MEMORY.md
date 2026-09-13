@@ -857,15 +857,16 @@ mapping A=MedGemma, B=OpenBioLLM. Lifecycle event part2_selected;
 records in artifacts/phase5_comparison_v2/. serve-llm default now
 MedGemma; OpenBioLLM kept as local audit copy only.
 
-## Phase 5 Part 3 final acceptance (2026-09-11)
+## Historical Phase 5 Part 3 final acceptance (2026-09-11, superseded by current v1.0.0 release state)
 
 Final set opened exactly once via the guarded runner: 6 cases x 3
 repeats, all pass scoring with byte-identical repeats. Human review
 accepted (closest calls: definition-heavy neoplastic synthesis,
 duplicate txl-multi claims, distractor citations in epithelial case;
 none crossed the rejection bar). Lifecycle event part3_accepted;
-report in artifacts/phase5_final_v1/. Phase 5 complete; dashboard
-remains Phase 6 work.
+report in artifacts/phase5_final_v1/. At this 2026-09-11 checkpoint, Phase 5
+was complete and dashboard work remained Phase 6; the current v1.0.0
+workstation release has since completed that work.
 
 ## Historical Ren v1.0.0 refinement (2026-09-11)
 
