@@ -32,6 +32,11 @@ class Ctx:
         self.console_errors: list[str] = []
         self.bad_responses: list[str] = []
         self.failed_requests: list[str] = []
+        # Keep lightweight browser network events so scenarios can prove that
+        # concurrent/double actions were dispatched and accepted by the real
+        # backend, rather than inferring admission from the final DOM state.
+        self.request_events: list[dict[str, Any]] = []
+        self.response_events: list[dict[str, Any]] = []
         self.expected_failed_requests: set[str] = set()
         self.unexpected_failed_requests: list[str] = []
         self.fixture_bindings: list[dict[str, str]] = []
@@ -39,6 +44,31 @@ class Ctx:
         page.on("pageerror", lambda e: self.console_errors.append(str(e)))
         page.on("requestfailed", lambda r: self.failed_requests.append(f"{r.method} {r.url}"))
         page.on("response", lambda r: self.bad_responses.append(f"{r.status} {r.url}") if r.status >= 500 else None)
+        page.on("request", self._record_request)
+        page.on("response", self._record_response)
+
+    @staticmethod
+    def _post_data(request) -> str | None:
+        try:
+            return request.post_data
+        except Exception:  # noqa: BLE001 - event capture must not affect scoring
+            return None
+
+    def _record_request(self, request) -> None:
+        self.request_events.append({
+            "method": request.method,
+            "url": request.url,
+            "post_data": self._post_data(request),
+        })
+
+    def _record_response(self, response) -> None:
+        request = response.request
+        self.response_events.append({
+            "method": request.method,
+            "url": response.url,
+            "status": response.status,
+            "post_data": self._post_data(request),
+        })
 
     def errors_since(self, n):
         return self.console_errors[n:]

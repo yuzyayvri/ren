@@ -59,6 +59,28 @@ def test_retrieve_symbolic(client):
     assert all(e["name"] and e["definition"] for e in body["entries"])
 
 
+def test_manual_retrieve_binds_order_and_query_provenance(client, monkeypatch):
+    import scripts.phase4_snapshot_reconciliation as rec
+
+    class Engine:
+        def retrieve(self, query, mode="hybrid", k=None):
+            assert query == "leukocyte"
+            assert mode == "hybrid"
+            return ["GO:0002443", "GO:0008150"]
+
+    monkeypatch.setattr(rec, "load_bound_query", lambda: Engine())
+    response = client.post("/api/retrieve", json={
+        "query": "leukocyte", "mode": "hybrid"})
+    assert response.status_code == 200
+    body = response.json()
+    entries = body["entries"]
+    assert body["query"] == "leukocyte" and body["mode"] == "hybrid"
+    assert [entry["go_id"] for entry in entries] == ["GO:0002443", "GO:0008150"]
+    assert [entry["rank"] for entry in entries] == [1, 2]
+    assert all(entry["query"] == "leukocyte" and entry["mode"] == "hybrid"
+               and entry["name"] and entry["definition"] for entry in entries)
+
+
 def _packet():
     from scripts.phase5_packet import build_packet
 

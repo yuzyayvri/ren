@@ -4,9 +4,16 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
+import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from bench import check
+
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 
 def register(B, IMG):
@@ -47,6 +54,103 @@ def register(B, IMG):
     async def v1_export(b, sid):
         return await b.page.evaluate(
             """async id => await (await fetch(`/api/v1/export/${id}`)).json()""", sid)
+
+    _manual_oracle_cache = {}
+
+    def authorized_manual_oracles(queries, mode="hybrid"):
+        """Build expected manual responses through the bound snapshot loader.
+
+        The stability runner uses a small browser-only virtualenv, so execute
+        the authorized loader in the repository's vision interpreter.  This
+        is a separate process from both the dashboard backend and the browser
+        page; the loader validates the sealed snapshot before producing the
+        deterministic IDs, content, ranks, and query provenance.
+        """
+        wanted = tuple(dict.fromkeys(queries))
+        missing = [query for query in wanted if (query, mode) not in _manual_oracle_cache]
+        if missing:
+            oracle_code = r'''import json
+import sqlite3
+import sys
+from scripts.phase4_snapshot_reconciliation import load_bound_query
+from scripts.phase4_v3_common import V3
+
+engine = load_bound_query()
+db = sqlite3.connect(f"file:{V3 / 'ontology.sqlite'}?mode=ro", uri=True)
+try:
+    out = {}
+    for query in sys.argv[1:]:
+        # Match the production route's default top-k (the route intentionally
+        # calls retrieve without an explicit k before describe_terms).
+        ranked_ids = engine.retrieve(query, mode="hybrid")
+        entries = []
+        for rank, go_id in enumerate(ranked_ids[:25], start=1):
+            row = db.execute(
+                "SELECT name, definition FROM terms WHERE id=? AND obsolete=0",
+                (go_id,),
+            ).fetchone()
+            if row is None:
+                continue
+            entries.append({"go_id": go_id, "name": row[0],
+                            "definition": row[1], "rank": rank,
+                            "mode": "hybrid", "query": query})
+        out[query] = {"query": query, "mode": "hybrid", "entries": entries}
+finally:
+    db.close()
+print(json.dumps(out, sort_keys=True))
+'''
+            oracle = subprocess.run(
+                [str(_ROOT / "scripts" / "vision_python.sh"), "-c", oracle_code, *missing],
+                cwd=str(_ROOT), capture_output=True, text=True, check=False,
+            )
+            if oracle.returncode != 0:
+                raise RuntimeError(
+                    f"bound retrieval oracle failed: {oracle.stderr[-500:] or oracle.stdout[-500:]}")
+            try:
+                computed = json.loads(oracle.stdout.strip().splitlines()[-1])
+            except (IndexError, ValueError) as exc:
+                raise RuntimeError("bound retrieval oracle returned invalid JSON") from exc
+            if set(computed) != set(missing):
+                raise RuntimeError("bound retrieval oracle omitted a requested query")
+            _manual_oracle_cache.update(
+                {(query, mode): computed[query] for query in missing})
+        return {query: _manual_oracle_cache[(query, mode)] for query in wanted}
+
+    def review_route_events(events):
+        path = "/api/v1/reviews"
+        return [event for event in events
+                if event.get("method") == "POST"
+                and urlsplit(event.get("url", "")).path.rstrip("/") == path]
+
+    def review_action_events(events, sid, fid, action):
+        """Return matching request/response events for one finding."""
+        path = "/api/v1/reviews"
+        matching = []
+        for event in events:
+            if (event.get("method") != "POST"
+                    or urlsplit(event.get("url", "")).path.rstrip("/") != path):
+                continue
+            try:
+                body = json.loads(event.get("post_data") or "{}")
+            except (TypeError, ValueError):
+                continue
+            if (body.get("specimen_id") == sid and body.get("finding_id") == fid
+                    and body.get("action") == action):
+                matching.append({"event": event, "body": body})
+        return matching
+
+    async def wait_for_review_roundtrips(b, req_start, resp_start, sid, fid,
+                                         action, timeout=30000):
+        """Wait until both dblclick requests have real HTTP responses."""
+        attempts = max(1, timeout // 100)
+        for _ in range(attempts):
+            requests = review_action_events(b.ctx.request_events[req_start:], sid, fid, action)
+            responses = review_action_events(b.ctx.response_events[resp_start:], sid, fid, action)
+            if len(requests) >= 2 and len(responses) >= 2:
+                return requests, responses
+            await b.page.wait_for_timeout(100)
+        return (review_action_events(b.ctx.request_events[req_start:], sid, fid, action),
+                review_action_events(b.ctx.response_events[resp_start:], sid, fid, action))
 
     def canonical(value):
         return json.dumps(value, sort_keys=True, separators=(",", ":"))
@@ -644,7 +748,11 @@ def register(B, IMG):
         if await btn.count() == 0:
             raise RuntimeError("review fixture has no confirm action")
         fid = await btn.get_attribute("data-fid")
+        req_start = len(b.ctx.request_events)
+        resp_start = len(b.ctx.response_events)
         await btn.dblclick()
+        request_matches, response_matches = await wait_for_review_roundtrips(
+            b, req_start, resp_start, sid, fid, "confirm")
         await b.page.wait_for_timeout(2500)
         await b.page.wait_for_function(
             "() => (document.querySelector('#evidence').textContent || '').includes('GO:')",
@@ -657,8 +765,20 @@ def register(B, IMG):
                           if r.get("finding_id") == fid and r.get("action") == "confirm"]
         effective = await v1_findings(b, sid)
         target_effective = [f for f in effective if f.get("finding_id") == fid]
+        request_route = review_route_events(b.ctx.request_events[req_start:])
+        response_route = review_route_events(b.ctx.response_events[resp_start:])
+        double_action = (len(request_route) == len(response_route) == 2
+                         and len(request_matches) == len(response_matches) == 2
+                         and all(event["event"].get("status") == 200
+                                 for event in response_matches)
+                         and all(item["body"] == {
+                             "specimen_id": sid, "finding_id": fid,
+                             "action": "confirm", "reviewer": "workstation"}
+                                 for item in request_matches))
         return [check("action-settled", "confirmed" in state.lower(), state[:120]),
                 check("single-row-remains", n > 0 and await row.count() == 1, n),
+                check("double-action-dispatched", double_action,
+                      {"requests": request_route, "responses": response_route}),
                 check("single-durable-effect", len(target_reviews) == 1 and len(target_effective) == 1,
                       {"fid": fid, "reviews": target_reviews, "effective": target_effective})]
 
@@ -788,7 +908,15 @@ def register(B, IMG):
         automatic_entries = [entry for group in automatic.get("evidence", {}).values()
                              for entry in group.get("evidence", [])]
         automatic_ids = [entry.get("go_id") for entry in automatic_entries]
+
+        # Compute each expected response through the authorized, immutable
+        # snapshot in this benchmark process.  This is intentionally separate
+        # from the HTTP server and browser state: an input-ignoring or
+        # request-ordinal backend cannot satisfy an exact oracle comparison.
+        oracle = authorized_manual_oracles(("leukocyte", "platelet"))
+
         async def manual_query(query):
+            expected = oracle[query]
             await b.page.fill("#query", query)
             await b.page.click("#retrieve")
             await b.page.wait_for_function(
@@ -801,38 +929,38 @@ def register(B, IMG):
                 "els => els.map(e => ({go_id: e.dataset.goId, rank: Number(e.dataset.rank), "
                 "query: e.dataset.query, text: e.textContent || ''}))")
             entries = (response or {}).get("entries", [])
-            bound = (len(shown) == len(entries[:8])
-                     and all(row["go_id"] == entry.get("go_id")
-                             and row["rank"] == entry.get("rank")
-                             and row["query"] == entry.get("query")
-                             and entry.get("name", "") in row["text"]
-                             and entry.get("definition", "")[:160] in row["text"]
-                             for entry, row in zip(entries[:8], shown)))
-            return response, shown, bound
+            expected_entries = expected["entries"][:8]
+            bound = (len(shown) == len(expected_entries)
+                     and all(row["go_id"] == entry["go_id"]
+                             and row["rank"] == entry["rank"]
+                             and row["query"] == entry["query"]
+                             and entry["name"] in row["text"]
+                             and entry["definition"][:160] in row["text"]
+                             for entry, row in zip(expected_entries, shown)))
+            # Include every returned field in the API comparison.  In
+            # particular this binds ordered IDs, names/definitions, ranks,
+            # mode, and query provenance to the snapshot oracle.
+            exact = canonical(response) == canonical(expected)
+            return response, shown, exact, bound
 
-        first, first_shown, first_bound = await manual_query("leukocyte")
-        second, second_shown, second_bound = await manual_query("platelet")
-        third, third_shown, third_bound = await manual_query("leukocyte")
+        first, first_shown, first_exact, first_bound = await manual_query("leukocyte")
+        second, second_shown, second_exact, second_bound = await manual_query("platelet")
+        third, third_shown, third_exact, third_bound = await manual_query("leukocyte")
         html = await b.page.inner_html("#evidence")
         query = await b.page.input_value("#query")
         first_entries = (first or {}).get("entries", [])
         second_entries = (second or {}).get("entries", [])
         third_entries = (third or {}).get("entries", [])
-        # Compare the complete content fields while ignoring only the query
-        # string: two different echoed labels are not proof that retrieval
-        # used the input.  The returned term identities and definitions must
-        # change with the query.
-        def content(response):
-            return {"mode": response.get("mode"), "entries": [
-                {key: entry.get(key) for key in ("go_id", "name", "definition", "rank", "mode")}
-                for entry in response.get("entries", [])]}
-
-        content_differs = canonical(content(first)) != canonical(content(second))
+        oracle_ids = {query: [entry["go_id"] for entry in result["entries"]]
+                      for query, result in oracle.items()}
+        oracle_differs = oracle_ids["leukocyte"] != oracle_ids["platelet"]
         same_query_content = canonical(first) == canonical(third)
-        ids_differ = {entry.get("go_id") for entry in first_entries} != {
-            entry.get("go_id") for entry in second_entries}
+        ids_differ = [entry.get("go_id") for entry in first_entries] != [
+            entry.get("go_id") for entry in second_entries]
         manual_ids = [entry.get("go_id") for entry in second_entries]
-        causal = (first and second and third
+        exact_oracle = first_exact and second_exact and third_exact
+        rendered_oracle = first_bound and second_bound and third_bound
+        causal = (first and second and third and exact_oracle and rendered_oracle
                   and first.get("query") == "leukocyte"
                   and second.get("query") == "platelet"
                   and first_entries and second_entries
@@ -841,20 +969,20 @@ def register(B, IMG):
                   and all(entry.get("query") == "leukocyte" for entry in third_entries)
                   and all(entry.get("go_id") and entry.get("name") and entry.get("definition")
                           for entry in [*first_entries, *second_entries, *third_entries])
-                  and content_differs
+                  and oracle_differs
                   and same_query_content
                   and ids_differ
                   and set(manual_ids) != set(automatic_ids)
-                  and first_bound and second_bound and third_bound
                   and "automatic derivation" not in html)
-        return [check("manual-results-replace-auto", causal,
-                       {"automatic_ids": automatic_ids, "first": first,
-                        "second": second, "first_shown": first_shown,
-                        "second_shown": second_shown, "third": third,
-                        "third_shown": third_shown, "content_differs": content_differs,
+        return [check("manual-results-match-oracle", exact_oracle and rendered_oracle,
+                       {"oracle_ids": oracle_ids, "api_exact": exact_oracle,
+                        "render_exact": rendered_oracle,
+                        "first_shown": first_shown, "second_shown": second_shown,
+                        "third_shown": third_shown}),
+                check("manual-results-replace-auto", causal,
+                       {"automatic_ids": automatic_ids, "oracle_ids": oracle_ids,
                         "same_query_content": same_query_content,
-                        "ids_differ": ids_differ,
-                        "html": html[:160]}),
+                        "ids_differ": ids_differ, "html": html[:160]}),
                 check("query-retained", query == "leukocyte"
                       and first.get("query") == "leukocyte"
                       and second.get("query") == "platelet"
@@ -1506,7 +1634,11 @@ def register(B, IMG):
         before_target_reviews = [r for r in before.get("reviews", []) if r.get("finding_id") == fid]
         if before_target_reviews:
             raise RuntimeError("double-approve fixture already has a target review")
+        req_start = len(b.ctx.request_events)
+        resp_start = len(b.ctx.response_events)
         await btn.dblclick()
+        request_matches, response_matches = await wait_for_review_roundtrips(
+            b, req_start, resp_start, sid, fid, "confirm")
         await b.page.wait_for_timeout(2500)
         await b.page.wait_for_function(
             "() => (document.querySelector('#evidence').textContent || '').includes('GO:')",
@@ -1516,6 +1648,16 @@ def register(B, IMG):
         after = await v1_export(b, sid)
         target_reviews = [r for r in after.get("reviews", []) if r.get("finding_id") == fid]
         target_effects = [f for f in await v1_findings(b, sid) if f.get("finding_id") == fid]
+        request_route = review_route_events(b.ctx.request_events[req_start:])
+        response_route = review_route_events(b.ctx.response_events[resp_start:])
+        double_action = (len(request_route) == len(response_route) == 2
+                         and len(request_matches) == len(response_matches) == 2
+                         and all(event["event"].get("status") == 200
+                                 for event in response_matches)
+                         and all(item["body"] == {
+                             "specimen_id": sid, "finding_id": fid,
+                             "action": "confirm", "reviewer": "workstation"}
+                                 for item in request_matches))
         durable_once = (len(after.get("reviews", [])) == len(before.get("reviews", [])) + 1
                         and len(target_reviews) == 1
                         and target_reviews[0].get("action") == "confirm"
@@ -1524,9 +1666,12 @@ def register(B, IMG):
                         and target_effects[0].get("review_state") == "confirmed")
         return [check("double-approve-settled", await row.count() == 1 and "confirmed" in state.lower(), state[:120]),
                 check("finding-still-visible", await b.findings_count() > 0, await b.findings_count()),
+                check("double-action-dispatched", double_action,
+                      {"requests": request_route, "responses": response_route}),
                 check("single-durable-review-effect", durable_once,
                       {"sid": sid, "fid": fid, "before": before_target_reviews,
-                       "after": target_reviews, "effective": target_effects})]
+                       "after": target_reviews, "effective": target_effects,
+                       "requests": request_route, "responses": response_route})]
 
     @S("A02-navigate-mid-analysis", "async", 2)
     async def _(b):
