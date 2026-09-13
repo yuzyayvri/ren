@@ -49,6 +49,13 @@ def sha256_path(path: Path) -> str:
 
 V1_SOURCE = "v1-import"
 
+PROVENANCE_FILES = (
+    "protocols/phase5_v1/freeze_manifest.json",
+    "protocols/phase5_v2/freeze_manifest.json",
+    "artifacts/phase5_comparison_v2/selection_manifest.json",
+    "artifacts/phase5_final_v1/final_report.json",
+)
+
 
 def specimen_catalog(limit: int = 60) -> list[dict[str, Any]]:
     import itertools
@@ -538,11 +545,14 @@ def create_app() -> Any:
 
         try:
             directory = _v1_dir(body["specimen_id"])
-            record = findings.record_review(
-                directory, body["finding_id"], body["action"],
-                changes=body.get("changes"),
-                reviewer=body.get("reviewer", "local"),
-                reason=body.get("reason"))
+            # Serialize review decisions with job admission and make
+            # identical browser replays genuinely idempotent on disk.
+            with lock:
+                record = findings.record_review(
+                    directory, body["finding_id"], body["action"],
+                    changes=body.get("changes"),
+                    reviewer=body.get("reviewer", "local"),
+                    reason=body.get("reason"))
         except (KeyError, TypeError, findings.FindingError) as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         return record
@@ -557,14 +567,15 @@ def create_app() -> Any:
             if action != "confirm":
                 raise findings.FindingError("bulk action supports confirm only")
             reviewer = body.get("reviewer", "local")
-            confirmed = []
-            for finding in findings.effective_findings(directory):
-                if finding["review_state"] != "unreviewed":
-                    continue
-                findings.record_review(
-                    directory, finding["finding_id"], "confirm",
-                    reviewer=reviewer, reason="bulk auto-approval")
-                confirmed.append(finding["finding_id"])
+            with lock:
+                confirmed = []
+                for finding in findings.effective_findings(directory):
+                    if finding["review_state"] != "unreviewed":
+                        continue
+                    findings.record_review(
+                        directory, finding["finding_id"], "confirm",
+                        reviewer=reviewer, reason="bulk auto-approval")
+                    confirmed.append(finding["finding_id"])
         except (KeyError, TypeError, findings.FindingError) as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         return {"confirmed": confirmed}
@@ -661,6 +672,11 @@ def create_app() -> Any:
                     if jobs[job_id]["state"] == "cancelled":
                         return
                     if result["status"] == "ok":
+                        # Keep the server-side canonical packet identity with
+                        # the persisted result.  Browser JSON round-trips can
+                        # reformat high-precision floats, so a verifier must
+                        # not recompute this digest from a JS-decoded packet.
+                        result["packet_sha256"] = packet_sha256
                         (directory / "synthesis.json").write_text(
                             json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
                     jobs[job_id].update({"state": "done" if result["status"] == "ok" else "failed",
@@ -688,16 +704,19 @@ def create_app() -> Any:
         synthesis = json.loads(synthesis_path.read_text(encoding="utf-8"))
         if synthesis.get("status") != "ok" or "validated" not in synthesis:
             raise HTTPException(status_code=409, detail="no valid synthesis to sign")
+        synthesis_packet_sha = packet_digest(synthesis["packet"])
+        if synthesis.get("packet_sha256") not in (None, synthesis_packet_sha):
+            raise HTTPException(status_code=409, detail="synthesis packet identity is invalid")
         current = build_packet(
             f"v1-{specimen_id}", "phase3-txl",
             findings.to_packet_findings(findings.confirmed_findings(directory)),
             retrieval.to_packet_context(directory),
             ["image-level-only", "no-patient-linkage"])
-        if sha256_bytes(canonical_bytes(current)) != packet_digest(synthesis["packet"]):
+        if sha256_bytes(canonical_bytes(current)) != synthesis_packet_sha:
             raise HTTPException(status_code=409,
                                 detail="findings or evidence changed since synthesis; re-synthesize")
         record = {"schema": "v1-signoff-v1", "specimen_id": specimen_id,
-                  "packet_sha256": packet_digest(synthesis["packet"]),
+                  "packet_sha256": synthesis_packet_sha,
                   "note_sha256": sha256_bytes(synthesis["note"].encode()),
                   "reviewer": body.get("reviewer", "local"),
                   "note": body.get("note"), "unix_time": time.time()}
@@ -740,10 +759,7 @@ def create_app() -> Any:
         from scripts.phase5_compare import frozen_models
 
         out: dict[str, Any] = {"models": frozen_models(), "sealed": {}}
-        for name in ("protocols/phase5_v1/freeze_manifest.json",
-                     "protocols/phase5_v2/freeze_manifest.json",
-                     "artifacts/phase5_comparison_v2/selection_manifest.json",
-                     "artifacts/phase5_final_v1/final_report.json"):
+        for name in PROVENANCE_FILES:
             path = ROOT / name
             if path.is_file():
                 out["sealed"][name] = sha256_path(path)

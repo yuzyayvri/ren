@@ -60,6 +60,7 @@ td.num { font-family: var(--mono); text-align: right; }
 .warn { color: var(--warn); } .ok { color: var(--ok); } .bad { color: var(--bad); }
 #note { white-space: pre-wrap; font-size: 12.5px; }
 #note.provisional { border-left: 3px solid var(--warn); padding-left: 8px; }
+.claim-hit { cursor: pointer; text-decoration: underline; text-decoration-color: var(--accent); }
 button.action {
   background: var(--panel-2); color: var(--text);
   border: 1px solid var(--line); border-radius: 4px;

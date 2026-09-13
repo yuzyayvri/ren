@@ -126,7 +126,11 @@ def test_reviews_recorded_outside_frozen_tree(client):
 
 def test_provenance_lists_sealed_digests(client):
     sealed = client.get("/api/provenance").json()["sealed"]
-    assert "protocols/phase5_v2/freeze_manifest.json" in sealed
+    import hashlib
+
+    assert set(sealed) == set(srv.PROVENANCE_FILES)
+    for name in srv.PROVENANCE_FILES:
+        assert sealed[name] == hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
 
 
 def test_offline_audit():

@@ -20,6 +20,104 @@ const api = async (path, opts) => {
   const ct = r.headers.get("content-type") || "";
   return ct.includes("application/json") ? r.json() : r.blob();
 };
+const escapeHtml = (value) => String(value ?? "")
+  .replaceAll("&", "&amp;").replaceAll("<", "&lt;")
+  .replaceAll(">", "&gt;").replaceAll('"', "&quot;")
+  .replaceAll("'", "&#39;");
+
+function renderNote(note) {
+  const text = String(note ?? "");
+  const claim = /\[(C\d+)\]/g;
+  let html = "", at = 0, match;
+  while ((match = claim.exec(text)) !== null) {
+    html += escapeHtml(text.slice(at, match.index));
+    html += `<span class="claim-hit" data-claim-id="${escapeHtml(match[1])}">${escapeHtml(match[0])}</span>`;
+    at = match.index + match[0].length;
+  }
+  html += escapeHtml(text.slice(at));
+  $("note").innerHTML = html;
+}
+
+function v1JobKey(specimenId) {
+  return `ren:v1-synthesis-job:${specimenId}`;
+}
+function rememberV1Job(specimenId, jobId) {
+  try { sessionStorage.setItem(v1JobKey(specimenId), jobId); } catch { /* storage is optional */ }
+}
+function forgottenV1Job(specimenId) {
+  try { sessionStorage.removeItem(v1JobKey(specimenId)); } catch { /* storage is optional */ }
+}
+
+function publishV1Job(specimenId, job) {
+  if (S.specimens[S.index]?.id !== specimenId) return;
+  $("job").dataset.jobId = job.id || $("job").dataset.jobId || "";
+  if (job.state === "done" && job.result?.note) {
+    S.note = job.result.note;
+    S.validated = job.result.validated;
+    renderNote(job.result.note);
+    $("note").classList.add("provisional");
+  } else if (job.state === "failed" || job.state === "cancelled") {
+    $("job").textContent = `${job.state}: ${job.error || ""}`;
+  }
+}
+
+function watchV1Job(specimenId, jobId, loadToken = S.loadToken) {
+  const token = ++S.jobToken;
+  clearInterval(S.jobTimer);
+  S.jobTimer = null;
+  rememberV1Job(specimenId, jobId);
+  $("job").dataset.jobId = jobId;
+  let polling = false;
+  const poll = async () => {
+    if (polling || token !== S.jobToken || loadToken !== S.loadToken ||
+        S.specimens[S.index]?.id !== specimenId) return;
+    polling = true;
+    try {
+      const job = await api(`/api/jobs/${jobId}`);
+      if (token !== S.jobToken || loadToken !== S.loadToken ||
+          S.specimens[S.index]?.id !== specimenId) return;
+      $("job").textContent = `${job.state} (${Math.round((job.progress || 0) * 100)}%)`;
+      if (["done", "failed", "cancelled"].includes(job.state)) {
+        clearInterval(S.jobTimer);
+        S.jobTimer = null;
+        publishV1Job(specimenId, job);
+        forgottenV1Job(specimenId);
+      }
+    } catch (e) {
+      if (token === S.jobToken && loadToken === S.loadToken &&
+          S.specimens[S.index]?.id === specimenId) {
+        clearInterval(S.jobTimer);
+        S.jobTimer = null;
+        $("job").textContent = `failed: ${e.message}`;
+      }
+    } finally { polling = false; }
+  };
+  void poll();
+  S.jobTimer = setInterval(() => { void poll(); }, 1500);
+}
+
+async function resumeV1Job(specimenId) {
+  if (!S.isV1 || S.specimens[S.index]?.id !== specimenId) return;
+  let jobId;
+  try { jobId = sessionStorage.getItem(v1JobKey(specimenId)); } catch { jobId = null; }
+  if (!jobId) return;
+  const loadToken = S.loadToken;
+  try {
+    const job = await api(`/api/jobs/${jobId}`);
+    if (loadToken !== S.loadToken || S.specimens[S.index]?.id !== specimenId) return;
+    if (["done", "failed", "cancelled"].includes(job.state)) {
+      $("job").dataset.jobId = jobId;
+      $("job").textContent = `${job.state} (${Math.round((job.progress || 0) * 100)}%)`;
+      publishV1Job(specimenId, job);
+      forgottenV1Job(specimenId);
+    } else {
+      $("job").textContent = `${job.state} (${Math.round((job.progress || 0) * 100)}%)`;
+      watchV1Job(specimenId, jobId, loadToken);
+    }
+  } catch {
+    forgottenV1Job(specimenId);
+  }
+}
 
 function fitView() {
   const c = $("canvas"), r = c.getBoundingClientRect();
@@ -170,6 +268,9 @@ async function loadIndex(i) {
   }
   if (!isCurrent()) return;
   fitView();
+  // A page reload clears in-memory state but preserves the active job token
+  // in sessionStorage. Reattach the UI after this specimen has loaded.
+  if (S.isV1) void resumeV1Job(spec.id);
 }
 function renderFindings(counts) {
   const el = $("findings");
@@ -329,9 +430,10 @@ $("retrieve").addEventListener("click", async () => {
       body: JSON.stringify({query: q, mode: "hybrid"})});
     S.lastRetrieval = r;
     $("evidence").innerHTML = r.entries.slice(0, 8).map((e, i) =>
-      `<div class="ev"><label><input type="checkbox" data-idx="${i}" ${i < 3 ? "checked" : ""}>
-       <span class="mono">${e.go_id}</span> ${e.name}</label>
-       <div class="dim">${e.definition.slice(0, 160)}${e.definition.length > 160 ? "…" : ""}</div></div>`).join("") +
+      `<div class="ev" data-go-id="${escapeHtml(e.go_id)}" data-rank="${escapeHtml(e.rank)}" data-query="${escapeHtml(e.query)}">` +
+      `<label><input type="checkbox" data-idx="${i}" ${i < 3 ? "checked" : ""}>
+       <span class="mono">${escapeHtml(e.go_id)}</span> ${escapeHtml(e.name)}</label>
+       <div class="dim">${escapeHtml(e.definition.slice(0, 160))}${e.definition.length > 160 ? "…" : ""}</div></div>`).join("") +
       `<div class="dim">mode ${r.mode}; rank order preserved</div>`;
   } catch (e) { $("evidence").innerHTML = `<span class="bad">retrieval failed: ${e.message}</span>`; }
 });
@@ -364,12 +466,12 @@ async function v1RetrieveAll(id = S.specimens[S.index].id) {
   $("evidence").innerHTML =
     `<div class="dim">automatic derivation (v1-query-derivation-v1), ${r.evidence} items</div>` +
     Object.entries(r.sets || {}).map(([fid, g]) =>
-      `<div class="ev" data-fid="${fid}"><span class="mono">${fid}</span> <span class="dim">query: ${g.query}</span><br>` +
+      `<div class="ev" data-fid="${escapeHtml(fid)}" data-query="${escapeHtml(g.query)}"><span class="mono">${escapeHtml(fid)}</span> <span class="dim">query: ${escapeHtml(g.query)}</span><br>` +
       g.evidence.map((e) => {
         const excluded = (g.excluded || []).some((x) => x.evidence_id === e.evidence_id);
         const origin = e.origin || `auto-${g.rule}`;
-        return `<label><input type="checkbox" data-v1-evidence data-fid="${fid}" data-eid="${e.evidence_id}" data-origin="${origin}" data-rank="${e.rank}" ${excluded ? "" : "checked"}>` +
-          ` <span class="mono">${e.evidence_id}</span> ${e.go_id} <span class="dim">[auto] origin: ${origin}; rank: ${e.rank}</span></label>`;
+        return `<label><input type="checkbox" data-v1-evidence data-fid="${escapeHtml(fid)}" data-eid="${escapeHtml(e.evidence_id)}" data-origin="${escapeHtml(origin)}" data-rank="${escapeHtml(e.rank)}" ${excluded ? "" : "checked"}>` +
+          ` <span class="mono">${escapeHtml(e.evidence_id)}</span> ${escapeHtml(e.go_id)} <span class="dim">[auto] origin: ${escapeHtml(origin)}; rank: ${escapeHtml(e.rank)}</span></label>`;
       }).join("<br>") +
       `</div>`).join("");
   document.querySelectorAll("#evidence input[data-v1-evidence]").forEach((box) => {
@@ -389,37 +491,35 @@ async function v1RetrieveAll(id = S.specimens[S.index].id) {
 }
 async function v1Synthesize(id = S.specimens[S.index].id) {
   const token = ++S.jobToken;
+  const loadToken = S.loadToken;
   $("job").textContent = "queued…";
   $("note").textContent = "";
+  $("note").innerHTML = "";
   $("note").classList.remove("provisional");
   S.note = null; S.validated = false;
-  const {job_id} = await api(`/api/v1/synthesize/${id}`, {method: "POST"});
-  S.v1JobIds.push(job_id);
-  if (token !== S.jobToken || S.specimens[S.index]?.id !== id) return;
-  $("job").dataset.jobId = job_id;
-  clearInterval(S.jobTimer);
-  const timer = setInterval(async () => {
-    if (token !== S.jobToken || S.specimens[S.index]?.id !== id) {
-      clearInterval(timer); return;
+  try {
+    const {job_id} = await api(`/api/v1/synthesize/${id}`, {method: "POST"});
+    S.v1JobIds.push(job_id);
+    if (token !== S.jobToken || loadToken !== S.loadToken || S.specimens[S.index]?.id !== id) return;
+    watchV1Job(id, job_id, loadToken);
+  } catch (e) {
+    if (token === S.jobToken && loadToken === S.loadToken && S.specimens[S.index]?.id === id) {
+      $("job").textContent = `v1 failed: ${e.message}`;
     }
-    const j = await api(`/api/jobs/${job_id}`);
-    $("job").textContent = `${j.state} (${Math.round((j.progress || 0) * 100)}%)`;
-    if (j.state === "done" || j.state === "failed" || j.state === "cancelled") {
-      clearInterval(timer);
-      if (j.state === "done") {
-        S.note = j.result.note; S.validated = j.result.validated;
-        $("note").textContent = j.result.note;
-        $("note").classList.add("provisional");
-      } else $("job").textContent = `${j.state}: ${j.error || ""}`;
-    }
-  }, 1500);
-  S.jobTimer = timer;
+    throw e;
+  }
 }
 $("synthesize").addEventListener("click", async () => {
   if (S.isV1) {
     const id = S.specimens[S.index].id;
     const token = ++S.jobToken;
+    clearInterval(S.jobTimer); S.jobTimer = null;
     $("job").textContent = "queued…";
+    $("job").removeAttribute("data-job-id");
+    $("note").textContent = "";
+    $("note").innerHTML = "";
+    $("note").classList.remove("provisional");
+    S.note = null; S.validated = false;
     v1RetrieveAll(id).then(() => v1Synthesize(id)).catch((e) => {
       if (token === S.jobToken && S.specimens[S.index]?.id === id) $("job").textContent = `v1 failed: ${e.message}`;
     });
@@ -454,7 +554,7 @@ $("synthesize").addEventListener("click", async () => {
         clearInterval(S.jobTimer);
         if (j.state === "done") {
           S.note = j.result.note; S.validated = j.result.validated || null;
-          $("note").textContent = j.result.note;
+          renderNote(j.result.note);
           $("note").classList.add("provisional");
         } else $("job").textContent = `${j.state}: ${j.error || ""}`;
       }
@@ -475,10 +575,9 @@ document.querySelectorAll("#sec-review [data-verdict]").forEach((b) =>
     review(b.dataset.verdict, {specimen: S.specimens[S.index]?.id, findings: counts}, null);
   }));
 $("note").addEventListener("click", (e) => {
-  const line = e.target.closest ? e.target.textContent : "";
-  const match = /\[(C\d+)\]/.exec(e.target.textContent || "");
-  if (!match || !S.validated) return;
-  const claim = (S.validated.claims || []).find((c) => c.claim_id === match[1]);
+  const hit = e.target.closest ? e.target.closest(".claim-hit") : null;
+  if (!hit || !S.validated) return;
+  const claim = (S.validated.claims || []).find((c) => c.claim_id === hit.dataset.claimId);
   if (!claim || !claim.finding_ids.length) return;
   const box = S.boxes.find((b) => b.finding_id === claim.finding_ids[0]);
   if (box && box.bbox) { S.highlight = box.bbox; draw(); }
@@ -512,8 +611,11 @@ async function refreshProvenance() {
   try {
     const p = await api("/api/provenance");
     $("provenance").innerHTML =
-      `<div class="mono">${Object.entries(p.sealed).map(([k, v]) => `${k}<br>${v.slice(0, 20)}…`).join("<br>")}</div>
-       <div class="dim">models: ${p.models.map((m) => m.name).join(", ")}</div>`;
+      `<div class="mono">${Object.entries(p.sealed).map(([k, v]) =>
+        `<div class="prov-file" data-path="${escapeHtml(k)}" data-digest="${escapeHtml(v)}">` +
+        `<span class="prov-name">${escapeHtml(k)}</span><br>` +
+        `<span class="prov-digest">${escapeHtml(v)}</span></div>`).join("")}</div>
+       <div class="dim">models: ${p.models.map((m) => escapeHtml(m.name)).join(", ")}</div>`;
   } catch { $("provenance").innerHTML = `<span class="bad">provenance unavailable</span>`; }
 }
 async function serverStatus() {

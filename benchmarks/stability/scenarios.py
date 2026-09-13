@@ -1,6 +1,11 @@
 """Scenario definitions. Each returns ordered checks sharing the weight."""
 from __future__ import annotations
 
+import hashlib
+import json
+import re
+from pathlib import Path
+
 from bench import check
 
 
@@ -22,9 +27,65 @@ def register(B, IMG):
 
     async def import_note_id(b):
         txt = await b.page.text_content("#import-note")
-        import re
         m = re.search(r"imported\s+([0-9a-f]{12})", txt or "")
         return m.group(1) if m else None
+
+    async def catalog_snapshot(b):
+        return await b.page.evaluate(
+            """async () => (await (await fetch('/api/specimens?limit=500')).json())
+                .map(item => ({id: item.id, label: `${item.source}: ${item.name}`}))""")
+
+    async def v1_findings(b, sid):
+        return await b.page.evaluate(
+            """async id => (await (await fetch(`/api/v1/findings/${id}`)).json()).findings""", sid)
+
+    def stable_findings(records):
+        volatile = {"run_id", "created_unix", "review_id"}
+        return [{key: value for key, value in record.items() if key not in volatile}
+                for record in records]
+
+    async def v1_export(b, sid):
+        return await b.page.evaluate(
+            """async id => await (await fetch(`/api/v1/export/${id}`)).json()""", sid)
+
+    def canonical(value):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+    def stable_retrieval(body):
+        if not isinstance(body, dict):
+            return body
+        stable = dict(body)
+        stable["sets"] = {
+            finding_id: {key: value for key, value in group.items()
+                         if key != "retrieved_unix"}
+            for finding_id, group in (body.get("sets") or {}).items()
+        }
+        return stable
+
+    async def selection_snapshot(b):
+        return await b.page.evaluate(
+            """() => ({
+                selected: document.querySelector('#specimens')?.value || '',
+                label: document.querySelector('#specimen-label')?.textContent || '',
+                findings: document.querySelector('#findings')?.innerHTML || '',
+                counts: document.querySelector('#findings')?.dataset.counts || '',
+                evidence: document.querySelector('#evidence')?.innerHTML || '',
+                note: document.querySelector('#note')?.textContent || '',
+                job: document.querySelector('#job')?.textContent || '',
+                st_job: document.querySelector('#st-job')?.textContent || ''
+            })""")
+
+    def independent_sealed_digests():
+        # Keep the file names explicit here: the benchmark computes these
+        # digests independently of the dashboard's provenance response.
+        names = (
+            "protocols/phase5_v1/freeze_manifest.json",
+            "protocols/phase5_v2/freeze_manifest.json",
+            "artifacts/phase5_comparison_v2/selection_manifest.json",
+            "artifacts/phase5_final_v1/final_report.json",
+        )
+        root = Path(__file__).resolve().parents[2]
+        return {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in names}
 
     async def import_and_select(b, path, fixture_key=None):
         note = await _note(b, path)
@@ -64,30 +125,6 @@ def register(B, IMG):
     async def prepared_v1(b, image_key):
         """A v1 specimen with analyzed, bulk-approved findings and retrieved evidence."""
         from bench import import_file
-        sid = await b.page.evaluate("() => (window.__prepSid || null)")
-        if sid:
-            # Other scenarios deliberately switch specimens (including the
-            # zero-finding fixture).  A cached preparation id is only useful
-            # after making it the active selection again and waiting for its
-            # findings render to settle.
-            if await b.page.input_value("#specimens") != sid:
-                await select_by_value(b, sid)
-            await ensure_findings(b)
-            await b.page.click("#mode-auto")
-            await b.page.wait_for_timeout(300)
-            approve_all = b.page.locator("#approve-all")
-            if await approve_all.count():
-                await approve_all.click()
-                await b.page.wait_for_function(
-                    "() => (document.querySelector('#st-job').textContent || '').includes('evidence attached automatically')",
-                    timeout=30000)
-            else:
-                await b.page.evaluate("id => v1RetrieveAll(id)", sid)
-            await b.page.wait_for_function(
-                "() => (document.querySelector('#evidence').textContent || '').includes('GO:')",
-                timeout=30000)
-            b.ctx.bind_fixture(image_key, sid)
-            return sid
         await import_file(b.page, IMG[image_key])
         await b.page.wait_for_function(
             "() => /imported [0-9a-f]{12}/.test(document.querySelector('#import-note').textContent || '')",
@@ -109,7 +146,6 @@ def register(B, IMG):
             "() => (document.querySelector('#evidence').textContent || '').includes('GO:')",
             timeout=30000)
         b.ctx.bind_fixture(image_key, sid)
-        await b.page.evaluate(f"() => window.__prepSid = '{sid}'")
         return sid
 
     async def review_fixture(b, image_key):
@@ -128,10 +164,21 @@ def register(B, IMG):
         await b.page.wait_for_function(
             "before => (S.v1JobIds || []).length > before || /v1 failed:/.test(document.querySelector('#job').textContent || '')",
             arg=before_jobs, timeout=30000)
+        submitted = await b.page.evaluate("before => (S.v1JobIds || []).slice(before)", before_jobs)
+        if not submitted:
+            raise RuntimeError("synthesis did not submit a new job")
+        job_id = submitted[-1]
         await b.page.wait_for_function(
             "() => { const t = document.querySelector('#job').textContent || ''; return /done|failed|cancelled|v1 failed/.test(t); }",
             timeout=timeout)
-        return await b.job_text(), await b.note_text()
+        job_text, note = await b.job_text(), await b.note_text()
+        backend_job = await b.page.evaluate(
+            """async id => await (await fetch(`/api/jobs/${id}`)).json()""", job_id)
+        if backend_job.get("state") not in ("done", "failed", "cancelled"):
+            raise RuntimeError(f"browser terminal text did not match backend job: {backend_job}")
+        if backend_job.get("state") == "done" and backend_job.get("result", {}).get("note") != note:
+            raise RuntimeError("browser note does not match the submitted synthesis result")
+        return job_text, note
 
     # ---- startup (6) ----
     @S("S01-clean-launch", "startup", 2)
@@ -145,11 +192,11 @@ def register(B, IMG):
 
     @S("S02-reload-stable", "startup", 2)
     async def _(b):
-        before = await b.specimen_ids()
+        before = await catalog_snapshot(b)
         await b.page.reload(wait_until="networkidle")
         await b.page.wait_for_function("() => document.querySelectorAll('#specimens option').length > 5")
-        after = await b.specimen_ids()
-        return [check("same-list", before == after, (len(before), len(after))),
+        after = await catalog_snapshot(b)
+        return [check("same-list", before == after, (before[:3], after[:3], len(before), len(after))),
                 check("canvas-present", await b.page.is_visible("#canvas"))]
 
     @S("S03-dead-backend", "startup", 1)
@@ -194,10 +241,20 @@ def register(B, IMG):
             timeout=timeout)
         return await b.page.text_content("#import-note")
 
+    async def rejected_import(b, path, timeout=30000):
+        before = await catalog_snapshot(b)
+        note = await _note(b, path, timeout=timeout)
+        after = await catalog_snapshot(b)
+        return note, before, after
+
     @S("I01-valid-png", "import", 2)
     async def _(b):
         note = await _note(b, IMG["valid"])
-        return [check("imported-msg", "imported" in note, note)]
+        sid = await import_note_id(b)
+        catalog = await catalog_snapshot(b)
+        return [check("imported-msg", "imported" in note and bool(sid), (sid, note)),
+                check("record-created", sid in {item["id"] for item in catalog},
+                      (sid, len(catalog)))]
 
     @S("I02-duplicate-import", "import", 1.5)
     async def _(b):
@@ -219,29 +276,40 @@ def register(B, IMG):
 
     @S("I03-corrupt-rejected", "import", 1.5)
     async def _(b):
-        note = await _note(b, IMG["corrupt"])
-        return [check("rejected-msg", "fail" in note.lower() or "reject" in note.lower(), note)]
+        note, before, after = await rejected_import(b, IMG["corrupt"])
+        return [check("rejected-msg", "fail" in note.lower() or "reject" in note.lower(), note),
+                check("no-record-created", before == after, (len(before), len(after)))]
 
     @S("I04-wrong-extension", "import", 1)
     async def _(b):
-        note = await _note(b, IMG["textpng"])
-        return [check("rejected-msg", "fail" in note.lower() or "reject" in note.lower(), note)]
+        note, before, after = await rejected_import(b, IMG["textpng"])
+        return [check("rejected-msg", "fail" in note.lower() or "reject" in note.lower(), note),
+                check("no-record-created", before == after, (len(before), len(after)))]
 
     @S("I05-rgba-accepted", "import", 1)
     async def _(b):
         note = await _note(b, IMG["rgba"])
-        return [check("accepted", "imported" in note, note)]
+        sid = await import_note_id(b)
+        catalog = await catalog_snapshot(b)
+        return [check("accepted", "imported" in note and bool(sid), (sid, note)),
+                check("record-created", sid in {item["id"] for item in catalog},
+                      (sid, len(catalog)))]
 
     @S("I06-grayscale-accepted", "import", 1)
     async def _(b):
         note = await _note(b, IMG["gray"])
-        return [check("accepted", "imported" in note, note)]
+        sid = await import_note_id(b)
+        catalog = await catalog_snapshot(b)
+        return [check("accepted", "imported" in note and bool(sid), (sid, note)),
+                check("record-created", sid in {item["id"] for item in catalog},
+                      (sid, len(catalog)))]
 
     @S("I07-oversized-rejected", "import", 1)
     async def _(b):
-        note = await _note(b, IMG["huge"], timeout=60000)
+        note, before, after = await rejected_import(b, IMG["huge"], timeout=60000)
         low = note.lower()
-        return [check("rejected-msg", "fail" in low or "reject" in low or "large" in low, note[:80])]
+        return [check("rejected-msg", "fail" in low or "reject" in low or "large" in low, note[:80]),
+                check("no-record-created", before == after, (len(before), len(after)))]
 
     @S("I08-repeated-imports", "import", 1)
     async def _(b):
@@ -300,26 +368,41 @@ def register(B, IMG):
 
     @S("V03-reanalyze-stable", "vision", 2)
     async def _(b):
-        await prepared_v1(b, "txl_v03")
+        sid = await prepared_v1(b, "txl_v03")
         n0 = await b.findings_count()
+        before = await v1_findings(b, sid)
         st = await analyze_current(b)
         n1 = await b.findings_count()
+        after = await v1_findings(b, sid)
+        stable_before = stable_findings(before)
+        stable_after = stable_findings(after)
         return [check("job-done", "analyze: done" in st, st),
                 check("initial-findings", n0 > 0, n0),
-                check("same-count", n0 == n1, (n0, n1))]
+                check("same-count", n0 == n1 and n1 > 0, (n0, n1)),
+                check("same-finding-content", stable_before == stable_after,
+                      (stable_before, stable_after))]
 
     @S("V04-refresh-persists", "vision", 2)
     async def _(b):
         sid = await prepared_v1(b, "txl_v04")
         n0 = await b.findings_count()
+        catalog_before = await catalog_snapshot(b)
+        findings_before = await v1_findings(b, sid)
         await b.page.reload(wait_until="networkidle")
         await b.page.wait_for_function("() => document.querySelectorAll('#specimens option').length > 5")
         await select_by_value(b, sid)
         await ensure_findings(b)
         n1 = await b.findings_count()
-        return [check("list-back", len(await b.specimen_ids()) > 0),
+        catalog_after = await catalog_snapshot(b)
+        findings_after = await v1_findings(b, sid)
+        return [check("list-back", len(catalog_after) > 0),
                 check("same-selection", await b.page.input_value("#specimens") == sid, sid),
-                check("count-persists", n0 == n1 and n1 > 0, (n0, n1))]
+                check("count-persists", n0 == n1 and n1 > 0, (n0, n1)),
+                check("catalog-content-persists", catalog_before == catalog_after,
+                      (len(catalog_before), len(catalog_after))),
+                check("finding-content-persists",
+                      stable_findings(findings_before) == stable_findings(findings_after),
+                      (findings_before, findings_after))]
 
     @S("V05-navigate-mid-run", "vision", 1)
     async def _(b):
@@ -334,11 +417,17 @@ def register(B, IMG):
             """async id => await (await fetch(`/api/jobs/${id}`)).json()""", job_id)
         nonterminal_before_navigation = job_before_navigation.get("state") in ("queued", "running")
         options = await b.page.eval_on_selector_all(
-            "#specimens option", "function(els, excluded) { return els.map(e => e.value).filter(v => v !== excluded); }", sid)
+            "#specimens option", "function(els, excluded) { return els.map(e => e.value).filter(v => v !== excluded && v.startsWith('txl-')); }", sid)
         target = options[0] if options else None
         if not target:
             raise RuntimeError("no alternate specimen available for mid-run navigation")
         await select_by_value(b, target)
+        await b.page.wait_for_function(
+            "() => !(document.querySelector('#findings').textContent || '').includes('loading findings')",
+            timeout=30000)
+        target_before = await selection_snapshot(b)
+        target_expected = await b.page.evaluate(
+            """async id => await (await fetch(`/api/specimens/${id}/overlays`)).json()""", target)
         errs = [e for e in b.ctx.console_errors if "uncaught" in e.lower()]
         state = await b.page.evaluate(
             """async id => { for (let i = 0; i < 240; i++) {
@@ -346,11 +435,22 @@ def register(B, IMG):
                 if (["done", "failed", "cancelled"].includes(j.state)) return j.state;
                 await new Promise(resolve => setTimeout(resolve, 1000));
             } return "timeout"; }""", job_id)
+        await b.page.wait_for_timeout(1000)
+        target_after = await selection_snapshot(b)
+        old_job_id = str(job_id)
+        uncontaminated = (target_before == target_after and target_after["selected"] == target
+                          and json.loads(target_after["counts"] or "{}") == target_expected.get("counts", {})
+                          and target_before["note"] == "" and target_before["evidence"] == ""
+                          and old_job_id not in target_after["job"]
+                          and old_job_id not in target_after["note"]
+                          and "analyze: done" not in target_after["st_job"])
         return [check("navigated", await b.page.input_value("#specimens") == target, target),
                 check("job-nonterminal-before-navigation", nonterminal_before_navigation,
                       job_before_navigation),
                 check("no-uncached-crash", not errs, errs[:1]),
-                check("analysis-job-settled", state in ("done", "failed", "cancelled"), state)]
+                check("analysis-job-settled", state in ("done", "failed", "cancelled"), state),
+                check("new-selection-uncontaminated", uncontaminated,
+                      {"before": target_before, "after": target_after, "old_job": old_job_id})]
 
     # ---- findings (12) ----
     @S("F01-approve-scrolled", "findings", 2)
@@ -358,8 +458,9 @@ def register(B, IMG):
         await b.goto_app()
         await b.page.set_viewport_size({"width": 1440, "height": 500})
         try:
-            await review_fixture(b, "txl_review")
+            sid = await review_fixture(b, "txl_review")
             n0 = await b.findings_count()
+            reviews_before = (await v1_export(b, sid)).get("reviews", [])
             await b.scroll_findings(600)
             btns = b.page.locator("#findings button[data-act='confirm']")
             nb = await btns.count()
@@ -387,15 +488,21 @@ def register(B, IMG):
             mode = await b.page.evaluate("() => document.querySelector('#findings').innerHTML.length")
             row = b.page.locator(f"#findings .ev[data-fid='{fid}']")
             state = await row.text_content() if await row.count() else ""
+            reviews_after = (await v1_export(b, sid)).get("reviews", [])
+            target_reviews = [r for r in reviews_after[len(reviews_before):]
+                              if r.get("finding_id") == fid and r.get("action") == "confirm"]
             return [check("had-scroll", y0 > 50, (y0, y1)),
                     check("confirm-changed-target", "confirmed" in state.lower(), state[:120]),
-                    check("scroll-preserved", abs(y1 - y0) < 40, (y0, y1, n0, n1, mode))]
+                    check("scroll-preserved", abs(y1 - y0) < 40, (y0, y1, n0, n1, mode)),
+                    check("confirm-persisted-on-target", len(target_reviews) == 1,
+                          {"fid": fid, "reviews": target_reviews})]
         finally:
             await b.page.set_viewport_size({"width": 1440, "height": 900})
 
     @S("F02-reject-scrolled", "findings", 1.5)
     async def _(b):
-        await review_fixture(b, "txl_reject")
+        sid = await review_fixture(b, "txl_reject")
+        reviews_before = (await v1_export(b, sid)).get("reviews", [])
         await b.scroll_findings(600)
         btns = b.page.locator("#findings button[data-act='reject']")
         if await btns.count() == 0:
@@ -414,13 +521,18 @@ def register(B, IMG):
         y1 = await b.page.evaluate("document.querySelector('#side').scrollTop")
         remaining = await b.page.eval_on_selector_all(
             "#findings .ev[data-fid]", "els => els.map(e => e.dataset.fid)")
+        reviews_after = (await v1_export(b, sid)).get("reviews", [])
+        target_reviews = [r for r in reviews_after[len(reviews_before):]
+                          if r.get("finding_id") == fid and r.get("action") == "reject"]
         return [check("had-scroll", y0 > 50, (y0, y1)),
                 check("reject-changed-target", bool(fid) and fid not in remaining, (fid, remaining)),
-                check("scroll-preserved", y1 > 50 and y1 <= y0, (y0, y1))]
+                check("scroll-preserved", y1 > 50 and y1 <= y0, (y0, y1)),
+                check("reject-persisted-on-target", len(target_reviews) == 1,
+                      {"fid": fid, "reviews": target_reviews})]
 
     @S("F03-bulk-approve", "findings", 1.5)
     async def _(b):
-        await import_and_select(b, IMG["txl_bulk"], "txl_bulk")
+        sid = await import_and_select(b, IMG["txl_bulk"], "txl_bulk")
         await ensure_findings(b)
         await b.page.click("#mode-auto")
         await b.page.wait_for_selector("#approve-all", timeout=15000)
@@ -435,27 +547,42 @@ def register(B, IMG):
         left = await b.page.evaluate(
             "() => [...document.querySelectorAll('#findings .ev')]"
             ".filter(e => (e.textContent || '').includes('unreviewed')).length")
+        records = await v1_findings(b, sid)
         return [check("bulk-ran", "auto-approved" in txt, txt[:80]),
-                check("none-unreviewed", left == 0, left)]
+                check("none-unreviewed", left == 0 and records
+                      and all(f.get("review_state") == "confirmed" for f in records),
+                      {"dom": left, "findings": records})]
 
     @S("F04-mode-switch", "findings", 1.5)
     async def _(b):
-        await review_fixture(b, "txl_mode")
-        states = []
+        sid = await review_fixture(b, "txl_mode")
+        finding_ids = [f["finding_id"] for f in await v1_findings(b, sid)]
+        transitions = []
         for _ in range(3):
             await b.page.click("#mode-manual")
             await b.page.wait_for_function(
                 "() => S.reviewMode === 'manual' && document.querySelector('#mode-manual')?.classList.contains('primary')",
                 timeout=15000)
-            states.append("manual")
+            manual_html = await b.page.inner_html("#findings")
+            manual_has_bulk = await b.page.locator("#approve-all").count() > 0
             await b.page.click("#mode-auto")
             await b.page.wait_for_function(
                 "() => S.reviewMode === 'auto' && document.querySelector('#mode-auto')?.classList.contains('primary')",
                 timeout=15000)
-            states.append("auto")
+            auto_html = await b.page.inner_html("#findings")
+            transitions.append({"manual": manual_html, "auto": auto_html,
+                                "manual_has_bulk": manual_has_bulk,
+                                "auto_has_bulk": await b.page.locator("#approve-all").count() > 0})
         n = await b.findings_count()
-        return [check("mode-toggled-and-settled", states == ["manual", "auto"] * 3, states),
-                check("list-intact", n > 0, n)]
+        changed = all(item["manual"] != item["auto"] for item in transitions)
+        controls = all(not item["manual_has_bulk"] and item["auto_has_bulk"]
+                       for item in transitions)
+        ids_after = [f["finding_id"] for f in await v1_findings(b, sid)]
+        return [check("mode-toggled-and-settled", len(transitions) == 3 and changed,
+                      [{"changed": item["manual"] != item["auto"]} for item in transitions]),
+                check("mode-controls-change", controls, transitions),
+                check("list-intact", n == len(finding_ids) and n > 0 and ids_after == finding_ids,
+                      (finding_ids, ids_after, n))]
 
     @S("F05-alter-after-auto", "findings", 1)
     async def _(b):
@@ -478,7 +605,8 @@ def register(B, IMG):
 
     @S("F06-double-approve", "findings", 1)
     async def _(b):
-        await review_fixture(b, "txl_double")
+        sid = await review_fixture(b, "txl_double")
+        before_reviews = (await v1_export(b, sid)).get("reviews", [])
         btn = b.page.locator("#findings button[data-act='confirm']").first
         if await btn.count() == 0:
             raise RuntimeError("review fixture has no confirm action")
@@ -491,25 +619,49 @@ def register(B, IMG):
         row = b.page.locator(f"#findings .ev[data-fid='{fid}']")
         state = await row.text_content() if await row.count() else ""
         n = await b.findings_count()
+        after_reviews = (await v1_export(b, sid)).get("reviews", [])
+        target_reviews = [r for r in after_reviews[len(before_reviews):]
+                          if r.get("finding_id") == fid and r.get("action") == "confirm"]
+        effective = await v1_findings(b, sid)
+        target_effective = [f for f in effective if f.get("finding_id") == fid]
         return [check("action-settled", "confirmed" in state.lower(), state[:120]),
-                check("single-row-remains", n > 0 and await row.count() == 1, n)]
+                check("single-row-remains", n > 0 and await row.count() == 1, n),
+                check("single-durable-effect", len(target_reviews) == 1 and len(target_effective) == 1,
+                      {"fid": fid, "reviews": target_reviews, "effective": target_effective})]
 
     @S("F07-rows-have-ids", "findings", 1)
     async def _(b):
-        await prepared_v1(b, "txl_f07")
-        n = await b.page.eval_on_selector_all("#findings .ev[data-fid]", "e=>e.length")
-        btns = await b.page.eval_on_selector_all("#findings button[data-act]", "e=>e.length")
-        return [check("rows-identified", n > 0, n),
-                check("actions-present", btns >= n * 2 and btns > 0, btns)]
+        sid = await prepared_v1(b, "txl_f07")
+        expected = [f["finding_id"] for f in await v1_findings(b, sid)]
+        row_ids = await b.page.eval_on_selector_all(
+            "#findings .ev", "els => els.map(e => e.dataset.fid || '')")
+        action_ids = await b.page.eval_on_selector_all(
+            "#findings button[data-act]", "els => els.map(e => e.dataset.fid || '')")
+        usable_rows = (bool(expected) and len(row_ids) == len(set(row_ids))
+                       and all(row_ids) and set(row_ids) == set(expected))
+        usable_actions = (len(action_ids) == len(expected) * 2
+                          and len(action_ids) == len(set(action_ids)) * 2
+                          and set(action_ids) == set(expected))
+        return [check("rows-identified", usable_rows, (row_ids, expected)),
+                check("actions-present", usable_actions, (action_ids, expected))]
 
     @S("F08-many-usable", "findings", 1)
     async def _(b):
-        await prepared_v1(b, "txl_f08")
+        sid = await prepared_v1(b, "txl_f08")
         n = await b.findings_count()
         side_h = await b.page.evaluate("document.querySelector('#side').clientHeight")
         side_scroll = await b.page.evaluate("document.querySelector('#side').scrollHeight")
-        return [check("rows-present", n > 0, n),
-                check("scrollable", side_scroll > side_h and side_scroll > 100, (side_scroll, side_h))]
+        rows = await b.page.eval_on_selector_all(
+            "#findings .ev", "els => els.map(e => ({fid: e.dataset.fid || '', text: e.textContent || ''}))")
+        actual = await v1_findings(b, sid)
+        row_ids = [row["fid"] for row in rows]
+        many = (len(actual) >= 3 and len(rows) == len(actual)
+                and len(row_ids) == len(set(row_ids)) and all(row_ids)
+                and set(row_ids) == {f["finding_id"] for f in actual}
+                and all(row["text"].strip() for row in rows))
+        return [check("many-rows-present", many, {"rows": rows, "findings": actual}),
+                check("scrollable", many and side_scroll > side_h and side_scroll > 100,
+                      (side_scroll, side_h, len(rows)))]
 
     @S("F09-empty-message", "findings", 1.5)
     async def _(b):
@@ -551,10 +703,15 @@ def register(B, IMG):
     async def _(b):
         sid = await prepared_v1(b, "txl_r02")
         html = await b.page.inner_html("#evidence")
-        fids = await b.page.eval_on_selector_all("#evidence .ev[data-fid]", "e=>e.length")
-        findings = await b.findings_count()
+        fids = await b.page.eval_on_selector_all(
+            "#evidence .ev[data-fid]", "els => els.map(e => e.dataset.fid || '')")
+        findings = await v1_findings(b, sid)
+        finding_ids = [f["finding_id"] for f in findings]
         return [check("evidence-rendered", len(html) > 50 and "GO:" in html, len(html)),
-                check("finding-links", fids == findings and fids > 0, (sid, findings, fids))]
+                check("finding-links", len(findings) > 1 and len(fids) == len(findings)
+                      and len(fids) == len(set(fids)) and all(fids)
+                      and set(fids) == set(finding_ids),
+                      (sid, finding_ids, fids))]
 
     @S("R03-rejected-excluded", "retrieval", 1.5)
     async def _(b):
@@ -580,7 +737,9 @@ def register(B, IMG):
         evidence_fids = set(evidence)
         retained_evidence = {key: value for key, value in evidence.items() if key in retained_ids}
         retained_ok = retained_ids == set(retained_evidence) and all(
-            bool(group.get("evidence")) for group in retained_evidence.values())
+            bool(group.get("evidence"))
+            and all(entry.get("finding_id") == key for entry in group.get("evidence", []))
+            for key, group in retained_evidence.items())
         return [check("rejected-finding-excluded", fid not in evidence_fids and fid not in retained_ids,
                        (fid, sorted(evidence_fids), sorted(retained_ids))),
                 check("non-rejected-evidence-retained", retained_ok,
@@ -588,10 +747,14 @@ def register(B, IMG):
 
     @S("R04-manual-override", "retrieval", 1.5)
     async def _(b):
-        await prepared_v1(b, "txl_r04")
+        sid = await prepared_v1(b, "txl_r04")
         automatic_html = await b.page.inner_html("#evidence")
         if "automatic derivation" not in automatic_html:
             raise RuntimeError("manual override has no automatic baseline to replace")
+        automatic = await v1_export(b, sid)
+        automatic_entries = [entry for group in automatic.get("evidence", {}).values()
+                             for entry in group.get("evidence", [])]
+        automatic_ids = [entry.get("go_id") for entry in automatic_entries]
         await b.page.fill("#query", "leukocyte")
         await b.page.click("#retrieve")
         await b.page.wait_for_function(
@@ -601,10 +764,29 @@ def register(B, IMG):
         html = await b.page.inner_html("#evidence")
         query = await b.page.input_value("#query")
         retrieval = await b.page.evaluate("() => S.lastRetrieval")
-        manual = ("GO:" in html and "rank order preserved" in html
-                  and "automatic derivation" not in html and html != automatic_html
-                  and retrieval and retrieval.get("query") == "leukocyte")
-        return [check("manual-results-replace-auto", manual, html[:160]),
+        shown = await b.page.eval_on_selector_all(
+            "#evidence .ev[data-go-id]",
+            "els => els.map(e => ({go_id: e.dataset.goId, rank: Number(e.dataset.rank), query: e.dataset.query, text: e.textContent || ''}))")
+        manual_entries = (retrieval or {}).get("entries", [])
+        shown_bound = (len(shown) == len(manual_entries[:8])
+                       and all(row["go_id"] == entry.get("go_id")
+                               and row["rank"] == entry.get("rank")
+                               and row["query"] == entry.get("query")
+                               and entry.get("name", "") in row["text"]
+                               and entry.get("definition", "")[:160] in row["text"]
+                               for entry, row in zip(manual_entries[:8], shown)))
+        manual_ids = [entry.get("go_id") for entry in manual_entries]
+        causal = (retrieval and retrieval.get("query") == "leukocyte"
+                  and manual_entries and all(entry.get("query") == "leukocyte"
+                                             and entry.get("go_id")
+                                             and entry.get("name") and entry.get("definition")
+                                             for entry in manual_entries)
+                  and set(manual_ids) != set(automatic_ids)
+                  and shown_bound
+                  and "automatic derivation" not in html)
+        return [check("manual-results-replace-auto", causal,
+                       {"automatic_ids": automatic_ids, "manual": manual_entries,
+                        "shown": shown, "html": html[:160]}),
                 check("query-retained", query == "leukocyte", query)]
 
     @S("R05-retry-same", "retrieval", 1)
@@ -616,8 +798,12 @@ def register(B, IMG):
         second = await b.page.evaluate(
             """async id => { const r = await fetch(`/api/v1/retrieve/${id}`, {method: 'POST'});
                 return {status: r.status, body: await r.json()}; }""", sid)
-        return [check("first-retrieve-ok", first["status"] == 200 and first["body"].get("evidence", 0) > 0, first),
-                check("retry-retrieve-ok", second["status"] == 200 and second["body"].get("evidence", 0) == first["body"].get("evidence", -1), second)]
+        same = canonical(stable_retrieval(first.get("body"))) == canonical(stable_retrieval(second.get("body")))
+        return [check("first-retrieve-ok", first["status"] == 200 and first["body"].get("evidence", 0) > 0
+                      and first["body"].get("sets"), first),
+                check("retry-retrieve-identical", second["status"] == 200 and same
+                      and second["body"].get("sets"),
+                      {"first": first, "second": second})]
 
     @S("R06-unconfirmed-blocked", "retrieval", 1.5)
     async def _(b):
@@ -657,9 +843,13 @@ def register(B, IMG):
                 const r = await fetch(`/api/v1/retrieve/${id}`, {method: 'POST'});
                 return {status: r.status, body: await r.json()};
             }))""", sid)
-        return [check("both-retrieves-ok", len(responses) == 2 and all(r["status"] == 200 for r in responses), responses),
-                check("same-evidence-count", len({r["body"].get("evidence", -1) for r in responses}) == 1 and responses[0]["body"].get("evidence", 0) > 0,
-                      [r["body"].get("evidence") for r in responses])]
+        same = (len(responses) == 2 and
+                canonical(stable_retrieval(responses[0].get("body"))) ==
+                canonical(stable_retrieval(responses[1].get("body"))))
+        return [check("both-retrieves-ok", len(responses) == 2 and all(r["status"] == 200 for r in responses)
+                      and all(r["body"].get("sets") for r in responses), responses),
+                check("same-retrieval-content", same and responses[0]["body"].get("evidence", 0) > 0,
+                      {"responses": responses})]
 
     # ---- evidence (6) ----
     @S("E01-query-origin-badges", "evidence", 2)
@@ -716,27 +906,47 @@ def register(B, IMG):
     async def _(b):
         sid = await prepared_v1(b, "txl_e03")
         links = await b.page.eval_on_selector_all(
-            "#evidence .ev[data-fid]", "els => els.map(e => e.dataset.fid)")
-        findings = await b.page.evaluate(
-            """async id => (await (await fetch(`/api/v1/findings/${id}`)).json()).findings
-                .map(f => f.finding_id)""", sid)
-        expected = sorted(set(findings))
-        actual = sorted(set(links))
-        return [check("linkage-matches-findings", bool(actual) and actual == expected
-                      and len(links) == len(findings), (actual, expected, len(links), len(findings)))]
+            "#evidence .ev[data-fid]", "els => els.map(e => e.dataset.fid || '')")
+        entries = await b.page.eval_on_selector_all(
+            "#evidence input[data-v1-evidence]",
+            "els => els.map(e => ({fid: e.dataset.fid || '', eid: e.dataset.eid || '', text: e.parentElement?.textContent || ''}))")
+        findings = await v1_findings(b, sid)
+        bundle = await v1_export(b, sid)
+        expected_fids = [f["finding_id"] for f in findings]
+        expected_entries = [(fid, entry.get("evidence_id"))
+                            for fid, group in bundle.get("evidence", {}).items()
+                            for entry in group.get("evidence", [])]
+        actual_entries = [(entry["fid"], entry["eid"]) for entry in entries]
+        linkage = (bool(expected_fids) and sorted(links) == sorted(expected_fids)
+                   and len(links) == len(set(links))
+                   and all(fid and eid for fid, eid in actual_entries)
+                   and len(actual_entries) == len(set(actual_entries))
+                   and sorted(actual_entries) == sorted(expected_entries)
+                   and all(entry["eid"] in entry["text"] for entry in entries))
+        return [check("linkage-matches-findings-and-evidence", linkage,
+                      {"links": links, "expected_fids": expected_fids,
+                       "entries": entries, "expected_entries": expected_entries})]
 
     @S("E04-refresh-persists", "evidence", 1)
     async def _(b):
         sid = await prepared_v1(b, "txl_e04")
         before = await b.page.eval_on_selector_all("#evidence .ev[data-fid]", "els => els.length")
+        bundle_before = await v1_export(b, sid)
         await b.page.reload(wait_until="networkidle")
         await b.page.wait_for_function("() => document.querySelectorAll('#specimens option').length > 5")
-        bundle = await b.page.evaluate(
-            """async id => { const r = await fetch(`/api/v1/export/${id}`); return await r.json(); }""", sid)
-        after = sum(len(group.get("evidence", [])) for group in bundle.get("evidence", {}).values())
+        await select_by_value(b, sid)
+        bundle_after = await v1_export(b, sid)
+        after = sum(len(group.get("evidence", [])) for group in bundle_after.get("evidence", {}).values())
         options = await b.page.eval_on_selector_all("#specimens option", "els => els.length")
         return [check("reloaded", options > 5, options),
-                check("evidence-persisted", before > 0 and after > 0, (before, after))]
+                check("evidence-persisted", before > 0 and after > 0
+                      and bundle_before.get("specimen_id") == sid
+                      and bundle_after.get("specimen_id") == sid,
+                      (before, after, sid)),
+                check("evidence-content-persists",
+                      canonical(bundle_before.get("evidence")) == canonical(bundle_after.get("evidence")),
+                      {"before": bundle_before.get("evidence"),
+                       "after": bundle_after.get("evidence")})]
 
     # ---- synthesis (10) ----
     @S("Y01-normal-note", "synthesis", 2.5)
@@ -809,18 +1019,23 @@ def register(B, IMG):
 
     @S("Y03-repeat-works", "synthesis", 1.5)
     async def _(b):
-        await prepared_v1(b, "txl_y03")
-        job, note = await synth_done(b)
-        retried = False
-        if "failed: SynthesisError: synthesis transport failed" in job:
-            # One recorded retry after re-verifying server health: distinguishes
-            # a flapped server process from a systematic synthesis failure.
-            await b.page.wait_for_timeout(15000)
-            job, note = await synth_done(b)
-            retried = True
-        return [check("done-again", "done" in job, job[:80]),
-                check("note-again", len(note) > 100, len(note)),
-                check("no-retry-needed", not retried, f"retried={retried}")]
+        sid = await prepared_v1(b, "txl_y03")
+        job1, note1 = await synth_done(b)
+        ids_after_first = await b.page.evaluate("() => [...(S.v1JobIds || [])]")
+        job2, note2 = await synth_done(b)
+        ids = await b.page.evaluate("() => [...(S.v1JobIds || [])]")
+        states = await b.page.evaluate(
+            """async ids => await Promise.all(ids.map(async id => await (await fetch(`/api/jobs/${id}`)).json()))""", ids)
+        packets = [job.get("result", {}).get("packet") for job in states]
+        repeated = (len(ids_after_first) == 1 and len(ids) == 2 and ids[0] != ids[1]
+                    and all(job.get("state") == "done" for job in states)
+                    and packets[0] is not None and packets[0] == packets[1])
+        return [check("first-synthesis-done", "done" in job1 and len(note1) > 100,
+                      (job1, len(note1))),
+                check("second-synthesis-done", "done" in job2 and len(note2) > 100,
+                      (job2, len(note2))),
+                check("real-repeat-with-stable-packet", repeated,
+                      {"sid": sid, "ids": ids, "states": states})]
 
     @S("Y04-double-click", "synthesis", 1)
     async def _(b):
@@ -855,16 +1070,28 @@ def register(B, IMG):
         await b.page.reload(wait_until="networkidle")
         await b.page.wait_for_selector("#synthesize")
         await select_by_value(b, sid)
+        await b.page.wait_for_function(
+            r"""id => /done \(100%\)/.test(document.querySelector('#job').textContent || '')
+                && (document.querySelector('#note').textContent || '').length > 100
+                && document.querySelector('#job').dataset.jobId === id""",
+            arg=job_id, timeout=240000)
         state = await b.page.evaluate(
-            """async id => { for (let i = 0; i < 240; i++) {
-                const r = await fetch(`/api/jobs/${id}`); const j = await r.json();
-                if (["done", "failed", "cancelled"].includes(j.state)) return j.state;
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            } return "timeout"; }""", job_id)
+            """async id => await (await fetch(`/api/jobs/${id}`)).json()""", job_id)
+        ui = await b.page.evaluate(
+            """() => ({selected: document.querySelector('#specimens').value,
+                job: document.querySelector('#job').textContent || '',
+                job_id: document.querySelector('#job').dataset.jobId || '',
+                note: document.querySelector('#note').textContent || '',
+                state_note: S.note || null})""")
+        ui_recovered = (ui["selected"] == sid and ui["job_id"] == job_id
+                        and "done (100%)" in ui["job"] and len(ui["note"]) > 100
+                        and ui["state_note"] == state.get("result", {}).get("note"))
         return [check("job-nonterminal-before-refresh", nonterminal_before_refresh,
                       job_before_refresh),
                 check("recovered", await b.page.input_value("#specimens") == sid, sid),
-                check("backend-job-settled", state == "done", state)]
+                check("browser-ui-recovered", ui_recovered, {"ui": ui, "job": state}),
+                check("backend-job-settled", state.get("state") == "done"
+                      and state.get("result", {}).get("note") == ui["note"], state)]
 
     @S("Y06-fail-then-retry", "synthesis", 1)
     async def _(b):
@@ -947,14 +1174,24 @@ def register(B, IMG):
             job, note = await synth_done(b)
         if "[C1]" not in note:
             raise RuntimeError("synthesized note contains no claim anchor")
-        clicked = await b.page.evaluate(
+        hit = b.page.locator("#note .claim-hit[data-claim-id='C1']")
+        if await hit.count() != 1:
+            raise RuntimeError("claim C1 was not rendered as a hit region")
+        expected = await b.page.evaluate(
             """() => {
-              const el = document.querySelector('#note');
-              const r = el.getBoundingClientRect();
-              el.dispatchEvent(new MouseEvent('click', {bubbles: true, clientX: r.x + 10, clientY: r.y + 10}));
-              return (typeof S !== 'undefined' && S.highlight) ? JSON.stringify(S.highlight) : 'no-highlight';
+              const claim = (S.validated?.claims || []).find(c => c.claim_id === 'C1');
+              const box = claim && S.boxes.find(item => item.finding_id === claim.finding_ids?.[0]);
+              return box?.bbox || null;
             }""")
-        return [check("click-handled", clicked != "no-highlight", str(clicked)[:100])]
+        if not expected:
+            raise RuntimeError("claim C1 has no corresponding finding box")
+        before = await b.page.evaluate("() => S.highlight || null")
+        await hit.click()
+        clicked = await b.page.evaluate("() => S.highlight || null")
+        return [check("claim-hit-region", before is None and clicked == expected,
+                      {"before": before, "after": clicked, "expected": expected}),
+                check("corresponding-highlight", clicked == expected,
+                      {"claim": "C1", "highlight": clicked, "expected": expected})]
 
     @S("P02-origin-rank-shown", "provenance", 1.5)
     async def _(b):
@@ -1000,10 +1237,20 @@ def register(B, IMG):
         await b.page.wait_for_function(
             "() => (document.querySelector('#provenance').textContent || '').includes('phase5')",
             timeout=15000)
-        html = await b.page.inner_html("#provenance")
-        import re
-        return [check("provenance-rendered", len(html) > 20 and "phase5" in html, html[:100]),
-                check("digest-visible", bool(re.search(r"[0-9a-f]{20}", html)), html[:100])]
+        expected = independent_sealed_digests()
+        api_digests = await b.page.evaluate("async () => (await (await fetch('/api/provenance')).json()).sealed")
+        displayed = await b.page.eval_on_selector_all(
+            "#provenance .prov-file",
+            "els => els.map(e => ({path: e.dataset.path, digest: e.dataset.digest, text: e.textContent || ''}))")
+        display_map = {row["path"]: row["digest"] for row in displayed}
+        exact = (api_digests == expected and display_map == expected
+                 and len(displayed) == len(expected)
+                 and all(row["digest"] == expected.get(row["path"])
+                         and row["digest"] in row["text"] for row in displayed))
+        return [check("provenance-rendered", len(displayed) == len(expected)
+                       and set(display_map) == set(expected), displayed),
+                check("named-digests-match-sealed-files", exact,
+                      {"expected": expected, "api": api_digests, "displayed": displayed})]
 
     @S("P04-no-stale-after-switch", "provenance", 1)
     async def _(b):
@@ -1033,19 +1280,36 @@ def register(B, IMG):
         txt = await b.page.text_content("#review-out")
         bundle = await b.page.evaluate(
             """async id => (await (await fetch(`/api/v1/export/${id}`)).json()).signoff""", sid)
+        synthesis = await b.page.evaluate(
+            """async id => (await (await fetch(`/api/v1/export/${id}`)).json()).synthesis""", sid)
+        packet_sha = synthesis.get("packet_sha256")
+        note_sha = hashlib.sha256(synthesis["note"].encode()).hexdigest()
         return [check("signed", "signed off" in txt.lower(), txt[:100]),
-                check("signoff-persisted", bundle and bundle.get("specimen_id") == sid, bundle)]
+                check("signoff-persisted", bundle and bundle.get("specimen_id") == sid, bundle),
+                check("signoff-binds-exact-synthesis", bool(packet_sha)
+                      and bundle.get("packet_sha256") == packet_sha
+                      and bundle.get("note_sha256") == note_sha,
+                      {"packet_sha": packet_sha,
+                       "actual_packet": bundle.get("packet_sha256"),
+                       "note_matches": bundle.get("note_sha256") == note_sha,
+                       "actual_note": bundle.get("note_sha256"),
+                       "expected_note": note_sha,
+                       "synthesis_note_len": len(synthesis.get("note", ""))})]
 
     @S("W02-sign-before-valid", "review", 2)
     async def _(b):
         sid = await import_and_select(b, IMG["w02"], "w02")
+        before = await v1_export(b, sid)
         await b.page.click("#signoff")
         await b.page.wait_for_function(
             "() => /sign-off failed/.test(document.querySelector('#review-out').textContent || '')",
             timeout=30000)
         txt = await b.page.text_content("#review-out")
+        after = await v1_export(b, sid)
         return [check("blocked-with-msg", "sign-off failed" in txt.lower() and "409" in txt and "nothing synthesized" in txt.lower(),
-                      f"{sid}: {txt[:100]}")]
+                      f"{sid}: {txt[:100]}"),
+                check("no-signoff-record-created", "signoff" not in after,
+                      {"before": before, "after": after})]
 
     @S("W03-upstream-change-blocks", "review", 2)
     async def _(b):
@@ -1128,12 +1392,18 @@ def register(B, IMG):
             """async id => await (await fetch(`/api/jobs/${id}`)).json()""", job_ids[-1])
         nonterminal_before_navigation = job_before_navigation.get("state") in ("queued", "running")
         options = await b.page.evaluate(
-            "(excluded) => [...document.querySelectorAll('#specimens option')].map(o => o.value).filter(v => v !== excluded)",
+            "(excluded) => [...document.querySelectorAll('#specimens option')].map(o => o.value).filter(v => v !== excluded && v.startsWith('txl-'))",
             sid)
         target = options[0] if options else None
         if not target:
             raise RuntimeError("no alternate specimen available for analysis navigation")
         await select_by_value(b, target)
+        await b.page.wait_for_function(
+            "() => !(document.querySelector('#findings').textContent || '').includes('loading findings')",
+            timeout=30000)
+        target_before = await selection_snapshot(b)
+        target_expected = await b.page.evaluate(
+            """async id => await (await fetch(`/api/specimens/${id}/overlays`)).json()""", target)
         errs = [e for e in b.ctx.console_errors if "uncaught" in e.lower()]
         state = await b.page.evaluate(
             """async id => { for (let i = 0; i < 240; i++) {
@@ -1141,39 +1411,66 @@ def register(B, IMG):
                 if (["done", "failed", "cancelled"].includes(j.state)) return j.state;
                 await new Promise(resolve => setTimeout(resolve, 1000));
             } return "timeout"; }""", job_ids[-1])
+        await b.page.wait_for_timeout(1000)
+        target_after = await selection_snapshot(b)
+        old_job_id = str(job_ids[-1])
+        uncontaminated = (target_before == target_after and target_after["selected"] == target
+                          and json.loads(target_after["counts"] or "{}") == target_expected.get("counts", {})
+                          and target_before["note"] == "" and target_before["evidence"] == ""
+                          and old_job_id not in target_after["job"]
+                          and old_job_id not in target_after["note"]
+                          and "analyze: done" not in target_after["st_job"])
         return [check("navigated", await b.page.input_value("#specimens") == target, target),
                 check("job-nonterminal-before-navigation", nonterminal_before_navigation,
                       job_before_navigation),
                 check("no-uncached-crash", not errs, errs[:1]),
-                check("job-settled", state in ("done", "failed", "cancelled"), state)]
+                check("job-settled", state in ("done", "failed", "cancelled"), state),
+                check("new-selection-uncontaminated", uncontaminated,
+                      {"before": target_before, "after": target_after, "old_job": old_job_id})]
 
     @S("A03-rapid-mode-switch", "async", 2)
     async def _(b):
-        await prepared_v1(b, "txl_a03")
+        sid = await prepared_v1(b, "txl_a03")
         if await b.page.locator("#mode-manual").count() == 0 or await b.page.locator("#mode-auto").count() == 0:
             raise RuntimeError("prepared fixture has no review mode controls")
+        seen = []
         for _ in range(4):
             await b.page.click("#mode-manual", timeout=3000)
+            await b.page.wait_for_function("() => S.reviewMode === 'manual'", timeout=15000)
+            seen.append(await b.page.evaluate("() => S.reviewMode"))
             await b.page.click("#mode-auto", timeout=3000)
-            await b.page.wait_for_timeout(200)
+            await b.page.wait_for_function("() => S.reviewMode === 'auto'", timeout=15000)
+            seen.append(await b.page.evaluate("() => S.reviewMode"))
         mode = await b.page.evaluate("() => S.reviewMode")
         findings = await b.findings_count()
-        return [check("stable", mode == "auto" and findings > 0, (mode, findings))]
+        ids = [f["finding_id"] for f in await v1_findings(b, sid)]
+        dom_ids = await b.page.eval_on_selector_all(
+            "#findings .ev[data-fid]", "els => els.map(e => e.dataset.fid)")
+        return [check("stable", seen == ["manual", "auto"] * 4 and mode == "auto",
+                      {"seen": seen, "mode": mode}),
+                check("findings-intact", findings > 0 and dom_ids == ids,
+                      {"findings": findings, "ids": ids, "dom_ids": dom_ids})]
 
     # ---- recovery (6) ----
     @S("C01-corrupt-then-valid", "recovery", 1.5)
     async def _(b):
         from bench import import_file
+        before_reject = await catalog_snapshot(b)
         await import_file(b.page, IMG["corrupt"])
         await b.page.wait_for_function(
             "() => document.querySelector('#import-note').textContent.length > 0", timeout=30000)
         n0 = await b.page.text_content("#import-note")
-        await import_file(b.page, IMG["valid"])
+        after_reject = await catalog_snapshot(b)
+        await import_file(b.page, IMG["valid_c01"])
         await b.page.wait_for_function(
             "() => document.querySelector('#import-note').textContent.includes('imported')", timeout=30000)
         sid = await import_note_id(b)
+        after_valid = await catalog_snapshot(b)
         return [check("failed-then-ok", "fail" in n0.lower() or "reject" in n0.lower(), n0[:60]),
-                check("valid-recovered", bool(sid), sid or "missing imported id")]
+                check("rejected-record-absent", before_reject == after_reject,
+                      (len(before_reject), len(after_reject))),
+                check("valid-recovered", bool(sid) and sid in {item["id"] for item in after_valid},
+                      (sid, len(after_valid)))]
 
     @S("C02-server-toggle", "recovery", 2)
     async def _(b):
@@ -1196,7 +1493,7 @@ def register(B, IMG):
 
     @S("C03-backend-restart", "recovery", 1.5)
     async def _(b):
-        before = await b.specimen_ids()
+        before = await catalog_snapshot(b)
         await b.page.evaluate(
             """async () => { const r = await fetch('/api/server/stop', {method: 'POST'});
                 if (!r.ok) throw new Error(`server stop ${r.status}`); }""")
@@ -1213,10 +1510,11 @@ def register(B, IMG):
             "() => (document.querySelector('#server-label').textContent || '').includes('up')",
             timeout=120000)
         status = await b.page.evaluate("() => fetch('/api/health').then(r => r.status)")
-        after = await b.specimen_ids()
+        after = await catalog_snapshot(b)
         return [check("backend-restarted", restart.get("ready") and restart.get("old_exit_code") is not None
                        and restart.get("new_pid"), restart),
-                check("state-persists", before == after and len(after) > 5, (len(before), len(after))),
+                check("state-persists", before == after and len(after) > 5,
+                      (before[:3], after[:3], len(before), len(after))),
                 check("recovered", status == 200 and "up" in (await b.page.text_content("#server-label")).lower(), status)]
 
     @S("C04-invalid-id-handled", "recovery", 1)
@@ -1229,20 +1527,25 @@ def register(B, IMG):
     @S("G01-huge-rejected", "edge", 1)
     async def _(b):
         from bench import import_file
+        before = await catalog_snapshot(b)
         await import_file(b.page, IMG["huge"])
         await b.page.wait_for_function(
             "() => document.querySelector('#import-note').textContent.length > 0", timeout=60000)
         note = await b.page.text_content("#import-note")
         low = note.lower()
-        return [check("rejected", "fail" in low or "reject" in low or "large" in low, note[:80])]
+        after = await catalog_snapshot(b)
+        return [check("rejected", "fail" in low or "reject" in low or "large" in low, note[:80]),
+                check("no-record-created", before == after, (len(before), len(after)))]
 
     @S("G02-keyboard-nav", "edge", 1)
     async def _(b):
-        before = await b.page.text_content("#specimen-label")
+        before = await b.page.input_value("#specimens")
         await b.page.keyboard.press(".")
         await b.page.wait_for_timeout(800)
-        after = await b.page.text_content("#specimen-label")
-        return [check("navigated", before != after, (before[:30], after[:30]))]
+        after = await b.page.input_value("#specimens")
+        label = await b.page.text_content("#specimen-label")
+        return [check("navigated", before != after and after == label.strip(),
+                      (before, after, label[:30]))]
 
     @S("G03-dialog-opens", "edge", 0.5)
     async def _(b):
@@ -1250,11 +1553,13 @@ def register(B, IMG):
             async with b.page.expect_file_chooser(timeout=8000) as fc:
                 await b.page.click("#import-btn", timeout=8000)
             ch = await fc.value
-            await ch.set_files(str(IMG["valid"]))
+            await ch.set_files(str(IMG["valid_g03"]))
             await b.page.wait_for_function(
                 "() => (document.querySelector('#import-note').textContent || '').length > 0",
                 timeout=30000)
-            opened = True
+            sid = await import_note_id(b)
+            catalog = await catalog_snapshot(b)
+            opened = bool(sid) and sid in {item["id"] for item in catalog}
         except Exception:  # noqa: BLE001 - native dialogs are environment-sensitive
             opened = False
         return [check("dialog-opens", opened, f"opened={opened}")]
@@ -1277,27 +1582,51 @@ def register(B, IMG):
     # ---- stability repeats (2) ----
     @S("T01-happy-path-repeat", "stability", 1)
     async def _(b):
-        await prepared_v1(b, "txl_t01")
-        job, note = await synth_done(b)
-        return [check("repeat-done", "done" in job, job[:80]),
-                check("repeat-note", len(note) > 100, len(note))]
+        sid = await prepared_v1(b, "txl_t01")
+        job1, note1 = await synth_done(b)
+        job2, note2 = await synth_done(b)
+        ids = await b.page.evaluate("() => [...(S.v1JobIds || [])]")
+        states = await b.page.evaluate(
+            """async ids => await Promise.all(ids.map(async id => await (await fetch(`/api/jobs/${id}`)).json()))""", ids)
+        packets = [job.get("result", {}).get("packet") for job in states]
+        return [check("first-repeat-done", "done" in job1 and len(note1) > 100,
+                      (job1, len(note1))),
+                check("second-repeat-done", "done" in job2 and len(note2) > 100,
+                      (job2, len(note2))),
+                check("repeat-jobs-are-real", len(ids) == 2 and ids[0] != ids[1]
+                      and all(job.get("state") == "done" for job in states)
+                      and packets[0] == packets[1],
+                      {"sid": sid, "ids": ids, "states": states})]
 
     @S("T02-bulk-review-repeat", "stability", 0.5)
     async def _(b):
-        await prepared_v1(b, "txl_t02")
+        sid = await prepared_v1(b, "txl_t02")
         n = await b.findings_count()
         evidence = await b.page.eval_on_selector_all("#evidence .ev[data-fid]", "els => els.length")
+        before = await v1_export(b, sid)
+        repeat = await b.page.evaluate(
+            """async id => { const r = await fetch('/api/v1/reviews/bulk', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({specimen_id: id, action: 'confirm', reviewer: 'workstation'})
+              }); return {status: r.status, body: await r.json()}; }""", sid)
+        after = await v1_export(b, sid)
         return [check("repeat-list", n > 0, n),
-                check("repeat-evidence", evidence == n and evidence > 0, (n, evidence))]
+                check("repeat-evidence", evidence == n and evidence > 0, (n, evidence)),
+                check("bulk-repeat-idempotent", repeat["status"] == 200
+                      and repeat["body"].get("confirmed") == []
+                      and before.get("reviews") == after.get("reviews"),
+                      {"repeat": repeat, "before": before.get("reviews"),
+                       "after": after.get("reviews")})]
 
     @S("T03-refresh-recovery-repeat", "stability", 0.5)
     async def _(b):
-        before = await b.specimen_ids()
+        before = await catalog_snapshot(b)
         await b.page.reload(wait_until="networkidle")
         await b.page.wait_for_function(
             "() => document.querySelectorAll('#specimens option').length > 5")
-        after = await b.specimen_ids()
-        return [check("repeat-reloaded", before == after and len(after) > 5, (len(before), len(after)))]
+        after = await catalog_snapshot(b)
+        return [check("repeat-reloaded", before == after and len(after) > 5,
+                       (before[:3], after[:3], len(before), len(after)))]
 
     # ---- offline (2) ----
     @S("O01-loopback-only", "offline", 2)

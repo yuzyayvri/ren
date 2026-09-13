@@ -82,12 +82,24 @@ def record_review(specimen_dir: Path, finding_id: str, action: str, *,
     allowed = {"label", "confidence", "qualifier", "region"}
     if changes and (unknown := set(changes) - allowed):
         raise FindingError(f"uncorrectable fields: {sorted(unknown)}")
+    # Browser retries and double-clicks must not create a second durable
+    # effect for the same current decision.  The review log remains
+    # append-only for genuine transitions; an identical immediately-current
+    # decision is an idempotent replay of the existing record.
+    normalized_changes = changes or {}
+    for previous in reversed(read_reviews(specimen_dir)):
+        if previous.get("finding_id") != finding_id:
+            continue
+        if (previous.get("action") == action
+                and previous.get("changes", {}) == normalized_changes):
+            return previous
+        break
     record = {
         "schema": "v1-review-v1",
         "finding_id": finding_id,
         "action": action,
         "original": originals[finding_id],
-        "changes": changes or {},
+        "changes": normalized_changes,
         "reviewer": reviewer,
         "reason": reason,
         "reviewed_unix": time.time(),

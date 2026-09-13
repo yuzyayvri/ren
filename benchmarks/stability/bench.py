@@ -71,6 +71,10 @@ def make_images(tmp: Path, tag: str = ""):
     imgs = {}
     imgs["valid"] = tmp / "valid.png"
     _vary(Image.new("RGB", (360, 363), (190, 170, 165))).save(imgs["valid"])
+    imgs["valid_c01"] = tmp / "valid_c01.png"
+    _vary(Image.new("RGB", (360, 363), (190, 170, 165)), "valid_c01").save(imgs["valid_c01"])
+    imgs["valid_g03"] = tmp / "valid_g03.png"
+    _vary(Image.new("RGB", (360, 363), (190, 170, 165)), "valid_g03").save(imgs["valid_g03"])
     imgs["duplicate_i02"] = tmp / "duplicate_i02.png"
     _vary(Image.new("RGB", (360, 363), (190, 170, 165)), "duplicate_i02").save(
         imgs["duplicate_i02"])
@@ -151,7 +155,7 @@ class Bench:
 
     async def specimen_ids(self):
         return await self.page.eval_on_selector_all(
-            "#specimens option", "els => els.map(e => e.textContent)")
+            "#specimens option", "els => els.map(e => e.value)")
 
     async def select_by_text(self, text):
         await self.page.select_option("#specimens", label=text)

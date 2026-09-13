@@ -65,6 +65,26 @@ def test_v1_review_lifecycle(client, monkeypatch):
         shutil.rmtree(directory)
 
 
+def test_identical_review_replay_is_idempotent(client):
+    specimen_id = _import(client).json()["specimen_id"]
+    directory = ROOT / "artifacts" / "v1_specimens" / specimen_id
+    try:
+        fake_vision = {"specimen_sha256": "x", "models": {},
+                       "findings": [{"finding_id": "F1", "label": "WBC", "confidence": 0.9,
+                                     "region": {"box_xyxy": [1, 1, 5, 5]}, "source": "machine",
+                                     "specimen_id": specimen_id}]}
+        (directory / "vision.json").write_text(json.dumps(fake_vision))
+        request = {"specimen_id": specimen_id, "finding_id": "F1",
+                   "action": "confirm", "reviewer": "t"}
+        first = client.post("/api/v1/reviews", json=request)
+        second = client.post("/api/v1/reviews", json=request)
+        assert first.status_code == second.status_code == 200
+        assert first.json()["review_id"] == second.json()["review_id"]
+        assert len((directory / "reviews.jsonl").read_text().splitlines()) == 1
+    finally:
+        shutil.rmtree(directory)
+
+
 def test_v1_retrieve_and_evidence_flow(client, monkeypatch):
     import scripts.phase4_snapshot_reconciliation as rec
 
@@ -144,6 +164,7 @@ def test_v1_synthesize_and_signoff_guards(client, monkeypatch):
                 break
             time.sleep(0.05)
         assert state["state"] == "done"
+        assert state["result"]["packet_sha256"]
         signoff = client.post(f"/api/v1/signoff/{specimen_id}",
                               json={"reviewer": "t"}).json()
         assert signoff["reviewer"] == "t" and signoff["packet_sha256"]
@@ -158,7 +179,8 @@ def test_v1_synthesize_and_signoff_guards(client, monkeypatch):
 def test_frontend_v1_wiring_present():
     text = (ROOT / "dashboard" / "app.js").read_text()
     for token in ("import-file", "v1RetrieveAll", "v1Synthesize", "export-btn",
-                  "/api/v1/signoff", "S.highlight", "boxCodes"):
+                  "/api/v1/signoff", "S.highlight", "boxCodes", "claim-hit",
+                  "resumeV1Job", "sessionStorage", "prov-file", "prov-digest"):
         assert token in text
 
 
