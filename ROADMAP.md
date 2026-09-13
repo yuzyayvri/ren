@@ -1,6 +1,6 @@
 # ren — project roadmap
 
-Phase 3 protocol/audit (2026-09-09, at the audit checkpoint): local TXL-PBC and
+Historical/superseded Phase 3 protocol-audit checkpoint (2026-09-09): local TXL-PBC and
 Munich AML metadata audit is complete; the prospective protocol is frozen in
 `artifacts/phase3_protocol_v1/README.md` with its machine-readable audit.
 No Phase 3 experiment had started at that audit checkpoint. TXL-PBC has 1,260 images in its supplied
@@ -154,7 +154,7 @@ out to be wrong rather than silently working around it.
   retained as the current best fold2 development candidate; Phase 2 remains
   unaccepted because the end-to-end gate remains unmet. Fold3 was untouched.
 
-## Phase 2 experiment note — bounded score adjustment (2026-09-09)
+## Historical Phase 2 experiment note — bounded score adjustment (2026-09-09, superseded)
 
 The validity-filter training defect is corrected: proposals with zero
 evaluable pixels are excluded, with counts recorded. FP diagnostics now
@@ -171,7 +171,7 @@ and binary PQ 0.596357 stayed unchanged. Dead recall/F1 are 0.427273/0.290797.
 The 0.55 gate remains unmet, so Phase 2 is not complete. Fold3 remained
 untouched.
 
-## Phase 2 appearance/context feature augmentation (2026-09-09)
+## Historical Phase 2 appearance/context feature augmentation (2026-09-09, superseded)
 
 Corrected proposal wording: the proposal-trained classifier improved full-fold2
 end-to-end macro-F1 from **0.471912** to **0.474432**, while reducing Dead F1;
@@ -186,7 +186,7 @@ augmented cache build was terminated by the environment before output, so no
 training, selection, full-fold2 evaluation, or retention decision is claimed.
 Fold3 remained untouched.
 
-## Path Foundation context comparison (2026-09-09)
+## Historical Path Foundation context comparison (2026-09-09, superseded by fold-3 acceptance)
 
 The single approved 532-column development comparison selected epoch 30 on
 monitor macro-F1 0.5565232993468779 versus 0.5133344600416373 for the control.
@@ -197,7 +197,7 @@ Astra final-readiness review before the one permitted fold3 evaluation; this
 does not constitute final Phase 2 completion or fold3 generalization.
 Historical validity-filter provenance remains unresolved.
 
-## Appearance/context repair completion (2026-09-09)
+## Historical appearance/context repair completion (2026-09-09, superseded by fold-3 acceptance)
 
 The corrected fixed-64-patch cache is published in
 `artifacts/phase2_appearance_context_classifier_v1/cache/`; the interrupted
@@ -239,8 +239,9 @@ inflammatory, connective, dead, epithelial), not just per-image tissue type.
 
 - Use HoVer-Net fast with nuclear foreground, horizontal/vertical offset, and
   five-type-plus-background branches; keep target generation, training,
-  inference, and evaluation separate. Path Foundation remains frozen and is
-  optional only for later instance features.
+  inference, and evaluation separate. Path Foundation remains frozen; the
+  accepted 532-feature classifier combines 148 nucleus appearance/context
+  features with a 384-dimensional Path Foundation patch embedding.
 - Develop on fold1→fold2, freeze all decisions, optionally refit folds1+2,
   then evaluate fold3 once. Reject checkpoints with unknown PanNuke fold
   exposure.

@@ -44,9 +44,11 @@ diagnostic-assist drafts requiring human sign-off.
 ## Current status
 
 Ren v1.0.0 is complete for the supported blood-smear workflow and independently
-release-verified. On branch `yuzy/v1-bughunt` at commit
-`68dd88a7ef2d7262945cbf51e09df861b2012221`, the fresh unfiltered Phase 6 browser
-stability run (`63ccc38b23c2`) scored 100.0/100 across 69 scenarios and 167
+release-verified. The certified implementation commit is
+`68dd88a7ef2d7262945cbf51e09df861b2012221`; the branch/PR has since advanced
+with documentation-only commits, without changing the certified implementation.
+The fresh unfiltered Phase 6 browser stability run (`63ccc38b23c2`) scored
+100.0/100 across 69 scenarios and 167
 checks. It had no crashes, skips, console errors, unexpected failed requests,
 or HTTP 5xx responses; the one expected failed request was the intentional S03
 dead-backend probe, and teardown was asserted.
@@ -62,6 +64,10 @@ run and independent verifier are retained in the populated checkout under
 `artifacts/benchmark_results/stability/`. The certification binds to the
 implementation commit above; subsequent documentation-only commits are not
 part of that browser run.
+
+The `v1.0.0` label is ren's workstation/product release designation. Python
+package metadata intentionally remains version `0.1.0` in `pyproject.toml` and
+is not being changed by this documentation release.
 
 Detailed decisions, acceptance criteria, and operational notes are in
 [`ROADMAP.md`](ROADMAP.md), [`AGENTS.md`](AGENTS.md), [`MEMORY.md`](MEMORY.md),
@@ -88,6 +94,11 @@ how to obtain them.
   scenario definitions for the v1 workstation
 - `protocols/phase5_v3/` — frozen production synthesis prompt and decoding
   contract (v1/v2 are retained as protocol history)
+- `protocols/phase5_v3/prompt.md` intentionally retains the frozen v2 prompt
+  heading because the production v3 freeze reuses that immutable prompt body;
+  `freeze_manifest.json` and the production path establish its v3 identity.
+  Do not edit the sealed prompt to rename the heading outside the protocol
+  freeze process.
 - `tests/` — focused regression and protocol tests
 - `docs/` — project review documentation
 - `flake.nix`, `flake.lock`, `pyproject.toml`, `uv.lock`, `Justfile` —

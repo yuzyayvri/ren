@@ -1,6 +1,6 @@
 # MEMORY.md — persistent context for this project
 
-## Phase 3 blood-axis audit (2026-09-09)
+## Historical/superseded Phase 3 blood-axis audit checkpoint (2026-09-09)
 
 Read-only audit completed for the local TXL-PBC and Munich AML sources. The
 reusable audit is `scripts/audit_phase3_datasets.py`; its report is
@@ -333,7 +333,7 @@ If ROCm works, expect significant speedup for fold2/3.
 
 ---
 
-## Appearance/context correction (2026-09-09)
+## Historical Phase 2 appearance/context correction (2026-09-09, superseded)
 
 The repaired fixed-64-patch cache is in
 `artifacts/phase2_appearance_context_classifier_v1/cache/`; the old
@@ -363,6 +363,11 @@ in `embeddings/virchow/head_results.json`; the Phase 1 smoke test passed.
 ---
 
 ## Phase 2 PanNuke masks — verified source contract (2026-09-07)
+
+> The dated Phase 2 development measurements and checkpoint instructions in
+> this section are historical and superseded by the accepted one-shot fold-3
+> evaluation recorded later. The source-mask and target-policy details remain
+> useful reference constraints.
 
 Run `/tmp/run_python.sh scripts/validate_pannuke_masks.py --output
 artifacts/pannuke_mask_audit.json` before a target-generation or segmentation
@@ -400,7 +405,7 @@ secondary. Fold2 numerical
 gates: detection F1 >=0.70, binary PQ >=0.50, end-to-end macro-F1 >=0.55, Dead
 recall >=0.20, Dead F1 >=0.15.
 
-**Current Phase 2 code/artifacts (2026-09-08):** `hover_fast_model.py` is a
+**Historical Phase 2 code/artifacts checkpoint (2026-09-08):** `hover_fast_model.py` is a
 compact multiscale encoder–decoder with NP/HV/type branches; it is a local
 baseline, not an official HoVer-Net reproduction. Targets, masked losses,
 post-processing, and basic instance metrics live in `pannuke_target_policy.py`,
@@ -610,7 +615,7 @@ The 0.55 gate remains unmet. Frozen input hashes are in the report and
 fold3_accessed is false; fold3 was not loaded, inspected, enumerated, or
 hashed.
 
-## Nonlinear classifier comparison (2026-09-09)
+## Historical Phase 2 nonlinear classifier comparison (2026-09-09, superseded)
 
 `select_validity_examples` in `scripts/evaluate_instance_suppression.py`
 excludes zero-evaluable proposals while preserving aligned rows, and
@@ -693,8 +698,8 @@ MedGemma revision is 3855f948626b7ae42bccd082757f15078c53e758; its
 1085085f6186e09f075dce216048e5b063ba419a5f8286d0cd66c74a4bb155d8.
 Verification passed offline for MedCPT and at llama.cpp context 8192 for
 MedGemma. Full timings and scores are in artifacts/future_models_verification.json.
-These are future candidates only; selected components, Phase 3/4, RudolfV 2-S,
-and fold3 were untouched.
+At this historical checkpoint these were future candidates only; the later
+selected components and accepted Phase 3/4 results are recorded below.
 
 Path Foundation context comparison (2026-09-09): the bounded 532-column
 fold1-to-fold2 run selected epoch 30 prospectively. Monitor macro-F1 was
@@ -831,7 +836,7 @@ sanctioned bound-load path) with regression tests, including bound
 symbolic output byte-identical to the sealed v3 ranking. Consumers must
 use the bound loader; the plain default path still raises by design.
 
-## Phase 5 Part 2 comparison stop (2026-09-11)
+## Historical Phase 5 Part 2 comparison stop (2026-09-11, superseded by v2 below)
 
 Both candidates ran all 24 dev generations under the frozen protocol and
 both are ineligible: valid structured-response rate 0.0 each. MedGemma
@@ -879,8 +884,9 @@ packaging instead of the vision_python.sh lib shim.
 
 ## Ren v1.0.0 browser stability certification (2026-09-13)
 
-The current release candidate is `yuzy/v1-bughunt` at
-`68dd88a7ef2d7262945cbf51e09df861b2012221` (PR #16 open; no merge). Independent
+The certified implementation commit is
+`68dd88a7ef2d7262945cbf51e09df861b2012221`; the branch/PR has since advanced
+with documentation-only commits and remains open (no merge). Independent
 headless-Firefox verification PASSed the fresh unfiltered run
 `63ccc38b23c2`: 69 scenarios, 167 checks, 100.0/100, source digest
 `60753bfddde2783fa18ab0af6a2c4939d0f84c8bd6d2a850284187a067fe3097`, zero
