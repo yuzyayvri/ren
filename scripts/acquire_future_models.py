@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Pinned, resumable acquisition for future MedCPT/MedGemma candidates."""
+"""Pinned, resumable acquisition for selected MedCPT/MedGemma artifacts.
+
+The legacy ``future`` filename and command names are retained for workflow
+compatibility.
+"""
 from __future__ import annotations
 
 import argparse

@@ -49,6 +49,13 @@ def sha256_path(path: Path) -> str:
 
 V1_SOURCE = "v1-import"
 
+PROVENANCE_FILES = (
+    "protocols/phase5_v1/freeze_manifest.json",
+    "protocols/phase5_v2/freeze_manifest.json",
+    "artifacts/phase5_comparison_v2/selection_manifest.json",
+    "artifacts/phase5_final_v1/final_report.json",
+)
+
 
 def specimen_catalog(limit: int = 60) -> list[dict[str, Any]]:
     import itertools
@@ -252,6 +259,13 @@ def create_app() -> Any:
     from fastapi.staticfiles import StaticFiles
 
     app = FastAPI(title="ren workstation", docs_url=None, redoc_url=None, openapi_url=None)
+
+    @app.middleware("http")
+    async def _no_store_api(request: Any, call_next: Any) -> Any:
+        response = await call_next(request)
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
     jobs: dict[str, dict[str, Any]] = {}
     lock = threading.Lock()
 
@@ -396,9 +410,16 @@ def create_app() -> Any:
 
     @app.post("/api/server/stop")
     def server_stop() -> dict[str, Any]:
+        import subprocess
+
         proc = _managed_proc(app)
         if proc is not None:
             proc.terminate()
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=10)
             app.state.server_proc = None
             app.state.server_model = None
         return server_status()
@@ -411,14 +432,7 @@ def create_app() -> Any:
             packet = validate_packet(body["packet"])
         except (KeyError, PacketError, TypeError, ValueError):
             raise HTTPException(status_code=422, detail="bad packet")
-        job_id = uuid.uuid4().hex[:12]
-        with lock:
-            jobs[job_id] = {"id": job_id, "state": "queued", "progress": 0.0}
-        worker = threading.Thread(target=_run_synthesis_job, args=(app, jobs, lock, job_id, packet),
-                                  daemon=True)
-        with lock:
-            jobs[job_id]["state"] = "running"
-        worker.start()
+        job_id = _start_job(lambda jid: _run_synthesis_job(app, jobs, lock, jid, packet))
         return {"job_id": job_id}
 
     @app.get("/api/jobs/{job_id}")
@@ -440,10 +454,24 @@ def create_app() -> Any:
             job["state"] = "cancelled"
             return {"id": job_id, "state": "cancelled"}
 
-    def _start_job(fn: Any, *args: Any) -> str:
+    def _evict_jobs() -> None:
+        terminal = [key for key, job in jobs.items()
+                    if job["state"] in ("done", "failed", "cancelled")]
+        for key in terminal[: max(0, len(terminal) + 1 - 128)]:
+            del jobs[key]
+
+    def _start_job(fn: Any, *args: Any, metadata: dict[str, Any] | None = None,
+                   admit: Any = None) -> str:
         job_id = uuid.uuid4().hex[:12]
         with lock:
+            _evict_jobs()
+            if admit is not None:
+                existing_id = admit()
+                if existing_id is not None:
+                    return existing_id
             jobs[job_id] = {"id": job_id, "state": "queued", "progress": 0.0}
+            if metadata:
+                jobs[job_id].update(metadata)
         worker = threading.Thread(target=fn, args=(job_id, *args), daemon=True)
         with lock:
             jobs[job_id]["state"] = "running"
@@ -469,7 +497,7 @@ def create_app() -> Any:
             shutil.copyfileobj(file.file, tmp)
             tmppath = Path(tmp.name)
         try:
-            record = ingest.ingest_file(tmppath)
+            record = ingest.ingest_file(tmppath, source_filename=file.filename or "upload")
         except ingest.IngestError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         finally:
@@ -485,9 +513,13 @@ def create_app() -> Any:
 
             try:
                 with lock:
+                    if jobs[job_id]["state"] == "cancelled":
+                        return
                     jobs[job_id]["progress"] = 0.3
                 result = vision.analyze_specimen(specimen_id)
                 with lock:
+                    if jobs[job_id]["state"] == "cancelled":
+                        return
                     jobs[job_id].update({"state": "done", "progress": 1.0,
                                          "result": {"findings": len(result["findings"]),
                                                     "detections": result["detections"]}})
@@ -513,14 +545,40 @@ def create_app() -> Any:
 
         try:
             directory = _v1_dir(body["specimen_id"])
-            record = findings.record_review(
-                directory, body["finding_id"], body["action"],
-                changes=body.get("changes"),
-                reviewer=body.get("reviewer", "local"),
-                reason=body.get("reason"))
+            # Serialize review decisions with job admission and make
+            # identical browser replays genuinely idempotent on disk.
+            with lock:
+                record = findings.record_review(
+                    directory, body["finding_id"], body["action"],
+                    changes=body.get("changes"),
+                    reviewer=body.get("reviewer", "local"),
+                    reason=body.get("reason"))
         except (KeyError, TypeError, findings.FindingError) as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         return record
+
+    @app.post("/api/v1/reviews/bulk")
+    def v1_reviews_bulk(body: dict[str, Any]) -> Any:
+        from scripts import v1_findings as findings
+
+        try:
+            directory = _v1_dir(body["specimen_id"])
+            action = body.get("action", "confirm")
+            if action != "confirm":
+                raise findings.FindingError("bulk action supports confirm only")
+            reviewer = body.get("reviewer", "local")
+            with lock:
+                confirmed = []
+                for finding in findings.effective_findings(directory):
+                    if finding["review_state"] != "unreviewed":
+                        continue
+                    findings.record_review(
+                        directory, finding["finding_id"], "confirm",
+                        reviewer=reviewer, reason="bulk auto-approval")
+                    confirmed.append(finding["finding_id"])
+        except (KeyError, TypeError, findings.FindingError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        return {"confirmed": confirmed}
 
     @app.post("/api/v1/retrieve/{specimen_id}")
     def v1_retrieve(specimen_id: str) -> Any:
@@ -528,6 +586,8 @@ def create_app() -> Any:
         from scripts import v1_retrieve as retrieval
 
         directory = _v1_dir(specimen_id)
+        if not (directory / "vision.json").is_file():
+            raise HTTPException(status_code=409, detail="specimen not analyzed yet")
         try:
             confirmed = findings.confirmed_findings(directory)
             if not confirmed:
@@ -536,7 +596,7 @@ def create_app() -> Any:
             retrieval.save_evidence(directory, sets)
         except retrieval.RetrievalError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
-        return {"sets": list(sets),
+        return {"sets": sets,
                 "evidence": sum(len(group["evidence"]) for group in sets.values())}
 
     @app.post("/api/v1/evidence")
@@ -549,6 +609,9 @@ def create_app() -> Any:
                 retrieval.exclude_evidence(directory, body["finding_id"], body["evidence_id"],
                                            reviewer=body.get("reviewer", "local"))
                 return {"excluded": body["evidence_id"]}
+            if body.get("op") == "include":
+                retrieval.include_evidence(directory, body["finding_id"], body["evidence_id"])
+                return {"included": body["evidence_id"]}
             if body.get("op") == "add":
                 return retrieval.add_manual_evidence(directory, body["finding_id"], body["go_id"],
                                                      reviewer=body.get("reviewer", "local"))
@@ -560,7 +623,7 @@ def create_app() -> Any:
     def v1_synthesize(specimen_id: str) -> Any:
         from scripts import v1_findings as findings
         from scripts import v1_retrieve as retrieval
-        from scripts.phase5_packet import build_packet
+        from scripts.phase5_packet import build_packet, canonical_bytes
 
         directory = _v1_dir(specimen_id)
         if not (directory / "vision.json").is_file():
@@ -577,6 +640,22 @@ def create_app() -> Any:
         except (ValueError, OSError, retrieval.RetrievalError) as exc:
             raise HTTPException(status_code=409, detail=str(exc))
 
+        packet_sha256 = sha256_bytes(canonical_bytes(packet))
+        # A browser reload loses its polling timer while the worker keeps
+        # running.  Reusing an identical active job makes a subsequent user
+        # click attach to that work instead of submitting a concurrent
+        # llama-server request (which can otherwise fail with HTTP 500).  The
+        # admission callback executes under the same lock as job creation, so
+        # two simultaneous POSTs cannot both pass the active-job check.
+        def admit_identical() -> str | None:
+            for active_id, active in jobs.items():
+                if (active.get("kind") == "v1-synthesis"
+                        and active.get("specimen_id") == specimen_id
+                        and active.get("packet_sha256") == packet_sha256
+                        and active.get("state") in ("queued", "running")):
+                    return active_id
+            return None
+
         def worker(job_id: str) -> None:
             from scripts.phase5_synthesize import (
                 SynthesisProductionError,
@@ -585,12 +664,21 @@ def create_app() -> Any:
 
             try:
                 with lock:
+                    if jobs[job_id]["state"] == "cancelled":
+                        return
                     jobs[job_id]["progress"] = 0.3
                 result = synthesize_packet(packet, "http://127.0.0.1:8080")
-                if result["status"] == "ok":
-                    (directory / "synthesis.json").write_text(
-                        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
                 with lock:
+                    if jobs[job_id]["state"] == "cancelled":
+                        return
+                    if result["status"] == "ok":
+                        # Keep the server-side canonical packet identity with
+                        # the persisted result.  Browser JSON round-trips can
+                        # reformat high-precision floats, so a verifier must
+                        # not recompute this digest from a JS-decoded packet.
+                        result["packet_sha256"] = packet_sha256
+                        (directory / "synthesis.json").write_text(
+                            json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
                     jobs[job_id].update({"state": "done" if result["status"] == "ok" else "failed",
                                          "progress": 1.0, "result": result,
                                          "error": result.get("failure")})
@@ -599,27 +687,68 @@ def create_app() -> Any:
                     jobs[job_id].update({"state": "failed",
                                          "error": f"{type(exc).__name__}: {exc}"})
 
-        return {"job_id": _start_job(worker)}
+        return {"job_id": _start_job(
+            worker, metadata={"kind": "v1-synthesis", "specimen_id": specimen_id,
+                              "packet_sha256": packet_sha256}, admit=admit_identical)}
 
     @app.post("/api/v1/signoff/{specimen_id}")
     def v1_signoff(specimen_id: str, body: dict[str, Any]) -> Any:
-        from scripts.phase5_packet import packet_digest
+        from scripts import v1_findings as findings
+        from scripts import v1_retrieve as retrieval
+        from scripts.phase5_packet import build_packet, canonical_bytes, packet_digest
 
-        directory = _v1_dir(specimen_id)
-        synthesis_path = directory / "synthesis.json"
-        if not synthesis_path.is_file():
-            raise HTTPException(status_code=409, detail="nothing synthesized to sign")
-        synthesis = json.loads(synthesis_path.read_text(encoding="utf-8"))
-        if synthesis.get("status") != "ok" or "validated" not in synthesis:
-            raise HTTPException(status_code=409, detail="no valid synthesis to sign")
-        record = {"schema": "v1-signoff-v1", "specimen_id": specimen_id,
-                  "packet_sha256": packet_digest(synthesis["packet"]),
-                  "note_sha256": sha256_bytes(synthesis["note"].encode()),
-                  "reviewer": body.get("reviewer", "local"),
-                  "note": body.get("note"), "unix_time": time.time()}
-        (directory / "signoff.json").write_text(
-            json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        return record
+        # Sign-off is a durable state transition.  Serialize validation and
+        # persistence together so two browser clicks cannot both observe an
+        # unsigned packet and append duplicate records.
+        with lock:
+            directory = _v1_dir(specimen_id)
+            synthesis_path = directory / "synthesis.json"
+            if not synthesis_path.is_file():
+                raise HTTPException(status_code=409, detail="nothing synthesized to sign")
+            synthesis = json.loads(synthesis_path.read_text(encoding="utf-8"))
+            if synthesis.get("status") != "ok" or "validated" not in synthesis:
+                raise HTTPException(status_code=409, detail="no valid synthesis to sign")
+            synthesis_packet_sha = packet_digest(synthesis["packet"])
+            if synthesis.get("packet_sha256") not in (None, synthesis_packet_sha):
+                raise HTTPException(status_code=409, detail="synthesis packet identity is invalid")
+            current = build_packet(
+                f"v1-{specimen_id}", "phase3-txl",
+                findings.to_packet_findings(findings.confirmed_findings(directory)),
+                retrieval.to_packet_context(directory),
+                ["image-level-only", "no-patient-linkage"])
+            if sha256_bytes(canonical_bytes(current)) != synthesis_packet_sha:
+                raise HTTPException(status_code=409,
+                                    detail="findings or evidence changed since synthesis; re-synthesize")
+            note_sha = sha256_bytes(synthesis["note"].encode())
+            signoff_path = directory / "signoff.json"
+            if signoff_path.is_file():
+                try:
+                    existing = json.loads(signoff_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    existing = None
+                if (isinstance(existing, dict)
+                        and existing.get("packet_sha256") == synthesis_packet_sha
+                        and existing.get("note_sha256") == note_sha):
+                    # Older records predate signoff_id; make the replay
+                    # identity explicit without appending another effect.
+                    existing.setdefault(
+                        "signoff_id",
+                        sha256_bytes(f"v1-signoff:{specimen_id}:{synthesis_packet_sha}".encode())[:12])
+                    signoff_path.write_text(
+                        json.dumps(existing, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                    return existing
+            record = {"schema": "v1-signoff-v1", "specimen_id": specimen_id,
+                      "signoff_id": sha256_bytes(
+                          f"v1-signoff:{specimen_id}:{synthesis_packet_sha}".encode())[:12],
+                      "packet_sha256": synthesis_packet_sha,
+                      "note_sha256": note_sha,
+                      "reviewer": body.get("reviewer", "local"),
+                      "note": body.get("note"), "unix_time": time.time()}
+            signoff_path.write_text(
+                json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            with (directory / "signoffs.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, sort_keys=True) + "\n")
+            return record
 
     @app.get("/api/v1/export/{specimen_id}")
     def v1_export(specimen_id: str) -> Any:
@@ -632,6 +761,9 @@ def create_app() -> Any:
         bundle["reviews"] = [json.loads(line) for line in
                              (directory / "reviews.jsonl").read_text(encoding="utf-8").splitlines()
                              if line.strip()] if (directory / "reviews.jsonl").is_file() else []
+        bundle["signoffs"] = [json.loads(line) for line in
+                               (directory / "signoffs.jsonl").read_text(encoding="utf-8").splitlines()
+                               if line.strip()] if (directory / "signoffs.jsonl").is_file() else []
         return JSONResponse(bundle)
 
     @app.post("/api/reviews")
@@ -654,10 +786,7 @@ def create_app() -> Any:
         from scripts.phase5_compare import frozen_models
 
         out: dict[str, Any] = {"models": frozen_models(), "sealed": {}}
-        for name in ("protocols/phase5_v1/freeze_manifest.json",
-                     "protocols/phase5_v2/freeze_manifest.json",
-                     "artifacts/phase5_comparison_v2/selection_manifest.json",
-                     "artifacts/phase5_final_v1/final_report.json"):
+        for name in PROVENANCE_FILES:
             path = ROOT / name
             if path.is_file():
                 out["sealed"][name] = sha256_path(path)

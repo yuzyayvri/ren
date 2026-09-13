@@ -59,6 +59,28 @@ def test_retrieve_symbolic(client):
     assert all(e["name"] and e["definition"] for e in body["entries"])
 
 
+def test_manual_retrieve_binds_order_and_query_provenance(client, monkeypatch):
+    import scripts.phase4_snapshot_reconciliation as rec
+
+    class Engine:
+        def retrieve(self, query, mode="hybrid", k=None):
+            assert query == "leukocyte"
+            assert mode == "hybrid"
+            return ["GO:0002443", "GO:0008150"]
+
+    monkeypatch.setattr(rec, "load_bound_query", lambda: Engine())
+    response = client.post("/api/retrieve", json={
+        "query": "leukocyte", "mode": "hybrid"})
+    assert response.status_code == 200
+    body = response.json()
+    entries = body["entries"]
+    assert body["query"] == "leukocyte" and body["mode"] == "hybrid"
+    assert [entry["go_id"] for entry in entries] == ["GO:0002443", "GO:0008150"]
+    assert [entry["rank"] for entry in entries] == [1, 2]
+    assert all(entry["query"] == "leukocyte" and entry["mode"] == "hybrid"
+               and entry["name"] and entry["definition"] for entry in entries)
+
+
 def _packet():
     from scripts.phase5_packet import build_packet
 
@@ -126,7 +148,11 @@ def test_reviews_recorded_outside_frozen_tree(client):
 
 def test_provenance_lists_sealed_digests(client):
     sealed = client.get("/api/provenance").json()["sealed"]
-    assert "protocols/phase5_v2/freeze_manifest.json" in sealed
+    import hashlib
+
+    assert set(sealed) == set(srv.PROVENANCE_FILES)
+    for name in srv.PROVENANCE_FILES:
+        assert sealed[name] == hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
 
 
 def test_offline_audit():
@@ -261,3 +287,11 @@ def test_stop_leaves_external_server_running(stub_llama):
 def test_indicator_distinguishes_managed():
     text = (ROOT / "dashboard" / "app.js").read_text()
     assert "up (external)" in text
+
+
+def test_review_rerender_preserves_ui_state():
+    text = (ROOT / "dashboard" / "app.js").read_text()
+    assert "side.scrollTop" in text
+    assert "refreshV1Overlays" in text
+    handler = text.split("button[data-act]")[1].split("}));")[0]
+    assert "loadIndex(S.index)" not in handler

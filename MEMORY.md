@@ -1,6 +1,6 @@
 # MEMORY.md — persistent context for this project
 
-## Phase 3 blood-axis audit (2026-09-09)
+## Historical/superseded Phase 3 blood-axis audit checkpoint (2026-09-09)
 
 Read-only audit completed for the local TXL-PBC and Munich AML sources. The
 reusable audit is `scripts/audit_phase3_datasets.py`; its report is
@@ -247,7 +247,7 @@ models/vision/virchow/pytorch_model.bin   # 631M param checkpoint
 models/vision/virchow/config.json         # architecture + pretrained_cfg
 /tmp/virchow_state.pt                     # cached state_dict, 2.53 GB
 scripts/extract_embeddings.py             # model definition + virchow loader
-scripts/train_head.py                     # LogisticRegression head trainer (not yet run)
+scripts/train_head.py                     # LogisticRegression head trainer (run; results recorded below)
 ```
 
 ---
@@ -281,7 +281,8 @@ excellent smoke-test performance. Virchow files/results remain as the Phase 1
 audit reference but should not be wired into the final pipeline.
 - `scripts/train_head.py` — sklearn LogisticRegression on embeddings. Loads
   from `embeddings/{backbone}/{fold}/`, trains on folds 1+2, tests on fold 3.
-  Not yet run — waiting for all 3 folds of embeddings.
+  Historical waiting note; the head was subsequently run after all 3 folds were
+  extracted, with results recorded in the Phase 1 artifacts above.
 
 ---
 
@@ -332,7 +333,7 @@ If ROCm works, expect significant speedup for fold2/3.
 
 ---
 
-## Appearance/context correction (2026-09-09)
+## Historical Phase 2 appearance/context correction (2026-09-09, superseded)
 
 The repaired fixed-64-patch cache is in
 `artifacts/phase2_appearance_context_classifier_v1/cache/`; the old
@@ -362,6 +363,11 @@ in `embeddings/virchow/head_results.json`; the Phase 1 smoke test passed.
 ---
 
 ## Phase 2 PanNuke masks — verified source contract (2026-09-07)
+
+> The dated Phase 2 development measurements and checkpoint instructions in
+> this section are historical and superseded by the accepted one-shot fold-3
+> evaluation recorded later. The source-mask and target-policy details remain
+> useful reference constraints.
 
 Run `/tmp/run_python.sh scripts/validate_pannuke_masks.py --output
 artifacts/pannuke_mask_audit.json` before a target-generation or segmentation
@@ -399,7 +405,7 @@ secondary. Fold2 numerical
 gates: detection F1 >=0.70, binary PQ >=0.50, end-to-end macro-F1 >=0.55, Dead
 recall >=0.20, Dead F1 >=0.15.
 
-**Current Phase 2 code/artifacts (2026-09-08):** `hover_fast_model.py` is a
+**Historical Phase 2 code/artifacts checkpoint (2026-09-08):** `hover_fast_model.py` is a
 compact multiscale encoder–decoder with NP/HV/type branches; it is a local
 baseline, not an official HoVer-Net reproduction. Targets, masked losses,
 post-processing, and basic instance metrics live in `pannuke_target_policy.py`,
@@ -609,7 +615,7 @@ The 0.55 gate remains unmet. Frozen input hashes are in the report and
 fold3_accessed is false; fold3 was not loaded, inspected, enumerated, or
 hashed.
 
-## Nonlinear classifier comparison (2026-09-09)
+## Historical Phase 2 nonlinear classifier comparison (2026-09-09, superseded)
 
 `select_validity_examples` in `scripts/evaluate_instance_suppression.py`
 excludes zero-evaluable proposals while preserving aligned rows, and
@@ -670,7 +676,7 @@ all five gates: F1 0.744241, PQ 0.596561, macro-F1 0.569366, Dead recall
 0.436364, Dead F1 0.396899. Digest 9ba36ff4739b0358dd61f97bdf91d203e32acc5a94090e5d498eef788d195b80.
 No training/refitting/tuning; historical filter preserved; fold3 untouched.
 
-## Future MedCPT/MedGemma candidates and Phase 4 history (2026-09-09)
+## Historical MedCPT/MedGemma candidates and Phase 4 history (2026-09-09)
 
 Historical Phase 4 retrieval protocol v1 (2026-09-10): MedCPT query/article
 roles were selected and verified from local pinned manifests.
@@ -692,8 +698,8 @@ MedGemma revision is 3855f948626b7ae42bccd082757f15078c53e758; its
 1085085f6186e09f075dce216048e5b063ba419a5f8286d0cd66c74a4bb155d8.
 Verification passed offline for MedCPT and at llama.cpp context 8192 for
 MedGemma. Full timings and scores are in artifacts/future_models_verification.json.
-These are future candidates only; selected components, Phase 3/4, RudolfV 2-S,
-and fold3 were untouched.
+At this historical checkpoint these were future candidates only; the later
+selected components and accepted Phase 3/4 results are recorded below.
 
 Path Foundation context comparison (2026-09-09): the bounded 532-column
 fold1-to-fold2 run selected epoch 30 prospectively. Monitor macro-F1 was
@@ -830,7 +836,7 @@ sanctioned bound-load path) with regression tests, including bound
 symbolic output byte-identical to the sealed v3 ranking. Consumers must
 use the bound loader; the plain default path still raises by design.
 
-## Phase 5 Part 2 comparison stop (2026-09-11)
+## Historical Phase 5 Part 2 comparison stop (2026-09-11, superseded by v2 below)
 
 Both candidates ran all 24 dev generations under the frozen protocol and
 both are ineligible: valid structured-response rate 0.0 each. MedGemma
@@ -851,17 +857,18 @@ mapping A=MedGemma, B=OpenBioLLM. Lifecycle event part2_selected;
 records in artifacts/phase5_comparison_v2/. serve-llm default now
 MedGemma; OpenBioLLM kept as local audit copy only.
 
-## Phase 5 Part 3 final acceptance (2026-09-11)
+## Historical Phase 5 Part 3 final acceptance (2026-09-11, superseded by current v1.0.0 release state)
 
 Final set opened exactly once via the guarded runner: 6 cases x 3
 repeats, all pass scoring with byte-identical repeats. Human review
 accepted (closest calls: definition-heavy neoplastic synthesis,
 duplicate txl-multi claims, distractor citations in epithelial case;
 none crossed the rejection bar). Lifecycle event part3_accepted;
-report in artifacts/phase5_final_v1/. Phase 5 complete; dashboard
-remains Phase 6 work.
+report in artifacts/phase5_final_v1/. At this 2026-09-11 checkpoint, Phase 5
+was complete and dashboard work remained Phase 6; the current v1.0.0
+workstation release has since completed that work.
 
-## Ren v1.0.0 refinement (2026-09-11)
+## Historical Ren v1.0.0 refinement (2026-09-11)
 
 Shipped on branch yuzy/v1-refinement: M1 PNG/JPEG ingestion + registry
 (TXL files are JPEG despite .png names, accepted deliberately); M2
@@ -876,3 +883,18 @@ exempt) against the frozen 8192-token context; decoding n_predict raised
 1024->2048 as protocol v3. Open follow-up: proper opencv-headless
 packaging instead of the vision_python.sh lib shim.
 
+## Ren v1.0.0 browser stability certification (2026-09-13)
+
+The certified implementation commit is
+`68dd88a7ef2d7262945cbf51e09df861b2012221`; the branch/PR has since advanced
+with documentation-only commits and remains open (no merge). Independent
+headless-Firefox verification PASSed the fresh unfiltered run
+`63ccc38b23c2`: 69 scenarios, 167 checks, 100.0/100, source digest
+`60753bfddde2783fa18ab0af6a2c4939d0f84c8bd6d2a850284187a067fe3097`, zero
+crashes/skips/console errors/unexpected failed requests/5xx responses, one
+intentional expected S03 connection-refused request, and asserted teardown
+with 52 run-created specimens cleaned. Automatic finding-to-retrieval wiring
+and arbitrary blood-smear PNG/JPEG ingestion are implemented. True WSI,
+tissue production inference, and autonomous clinical calls remain out of scope.
+The certification binds to the implementation commit above; subsequent
+documentation-only commits are not part of that browser run.

@@ -87,9 +87,33 @@ def retrieve_for_findings(findings: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def save_evidence(specimen_dir: Path, sets: dict[str, Any]) -> Path:
+    # Retrieval can be repeated after a review action or a browser reload.
+    # Keep reviewer selections attached to the finding while replacing the
+    # machine-generated result set; otherwise a refresh silently resurrects
+    # evidence that the reviewer explicitly excluded.
+    existing: dict[str, Any] = {}
     path = specimen_dir / "evidence.json"
+    if path.is_file():
+        existing = _load_sets(specimen_dir)
+    for finding_id, group in sets.items():
+        previous = existing.get(finding_id, {})
+        group["excluded"] = list(previous.get("excluded", group.get("excluded", [])))
+        group["manual_adds"] = list(previous.get("manual_adds", group.get("manual_adds", [])))
     path.write_text(json.dumps(sets, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
+
+
+def _load_sets(specimen_dir: Path) -> dict[str, Any]:
+    path = specimen_dir / "evidence.json"
+    if not path.is_file():
+        raise RetrievalError("no retrieved evidence; run retrieval first")
+    try:
+        sets = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise RetrievalError(f"unreadable evidence file: {exc}") from exc
+    if not isinstance(sets, dict):
+        raise RetrievalError("unreadable evidence file")
+    return sets
 
 
 def add_manual_evidence(specimen_dir: Path, finding_id: str, go_id: str, *,
@@ -99,7 +123,7 @@ def add_manual_evidence(specimen_dir: Path, finding_id: str, go_id: str, *,
     if not re.fullmatch(r"GO:\d{7}", go_id or ""):
         raise RetrievalError(f"bad GO identifier: {go_id!r}")
     path = specimen_dir / "evidence.json"
-    sets = json.loads(path.read_text(encoding="utf-8"))
+    sets = _load_sets(specimen_dir)
     if finding_id not in sets:
         raise RetrievalError(f"unknown finding: {finding_id}")
     import sqlite3
@@ -129,10 +153,29 @@ def add_manual_evidence(specimen_dir: Path, finding_id: str, go_id: str, *,
 def exclude_evidence(specimen_dir: Path, finding_id: str, evidence_id: str, *,
                      reviewer: str = "local") -> None:
     path = specimen_dir / "evidence.json"
-    sets = json.loads(path.read_text(encoding="utf-8"))
+    sets = _load_sets(specimen_dir)
     if finding_id not in sets:
         raise RetrievalError(f"unknown finding: {finding_id}")
-    sets[finding_id]["excluded"].append({"evidence_id": evidence_id, "reviewer": reviewer})
+    group = sets[finding_id]
+    known = {entry.get("evidence_id") for entry in group.get("evidence", [])}
+    known.update(entry.get("evidence_id") for entry in group.get("manual_adds", []))
+    if evidence_id not in known:
+        raise RetrievalError(f"unknown evidence: {evidence_id}")
+    excluded = {entry.get("evidence_id") for entry in group.get("excluded", [])}
+    if evidence_id not in excluded:
+        group["excluded"].append({"evidence_id": evidence_id, "reviewer": reviewer})
+    path.write_text(json.dumps(sets, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def include_evidence(specimen_dir: Path, finding_id: str, evidence_id: str) -> None:
+    """Restore a previously excluded evidence item through an explicit review action."""
+    path = specimen_dir / "evidence.json"
+    sets = _load_sets(specimen_dir)
+    if finding_id not in sets:
+        raise RetrievalError(f"unknown finding: {finding_id}")
+    group = sets[finding_id]
+    group["excluded"] = [entry for entry in group.get("excluded", [])
+                          if entry.get("evidence_id") != evidence_id]
     path.write_text(json.dumps(sets, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
@@ -162,7 +205,7 @@ def to_packet_context(specimen_dir: Path, per_finding: int = PACKET_PER_FINDING)
 
     if not (specimen_dir / "evidence.json").is_file():
         raise RetrievalError("no retrieved evidence; run retrieval first")
-    context = []
+    packet_entries = []
     kept: dict[str, int] = {}
     for entry in selected_evidence(specimen_dir):
         # Reviewer-added evidence is never silently dropped by the cap.
@@ -176,6 +219,12 @@ def to_packet_context(specimen_dir: Path, per_finding: int = PACKET_PER_FINDING)
         for key in ("name", "definition"):
             if not entry.get(key):
                 raise RetrievalError(f"manual evidence needs {key}: {entry['evidence_id']}")
-        context.append({k: entry[k] for k in
-                        ("evidence_id", "go_id", "name", "definition", "rank", "mode", "query")})
-    return context
+        packet_entries.append({k: entry[k] for k in
+                               ("evidence_id", "go_id", "name", "definition", "rank", "mode", "query")})
+    # The source evidence ids are per-finding and the cap above intentionally
+    # drops lower-ranked entries.  Reassign packet-local ids after filtering so
+    # a packet never presents a sparse sequence such as E1,E2,E3,E6,E7,E8 to
+    # the model; packet references remain deterministic while the audit trail
+    # in evidence.json keeps the original ids intact.
+    return [{**entry, "evidence_id": f"E{number}"}
+            for number, entry in enumerate(packet_entries, start=1)]

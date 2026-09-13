@@ -31,8 +31,9 @@ models-embed:
     mkdir -p models/embed
     hf download microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext --local-dir models/embed/pubmedbert
 
-# Pinned MedCPT retrieval artifacts plus the MedGemma Phase 5 candidate; verified
-# by the dedicated scripts.
+# Pinned, selected MedCPT retrieval artifacts plus the frozen MedGemma
+# production synthesis artifact; legacy future-* recipe names are retained for
+# reproducibility and compatibility.
 models-future-acquire:
     /tmp/run_python.sh scripts/acquire_future_models.py all
 
@@ -99,15 +100,16 @@ final-preconditions:
 
 # --- phase 6 ---------------------------------------------------------------
 
-# Local dashboard (loopback-only, offline). Run `just serve-llm` first
-# in another shell if note generation is needed.
+# Local dashboard (loopback-only, offline). Run `just serve-llm` separately for
+# synthesis, or use the dashboard synthesis toggle to manage the local server.
 serve-dashboard port="8081":
     /tmp/run_python.sh scripts/phase6_server.py --port {{port}}
 
 # --- v1 ----------------------------------------------------------------------
 
 # v1 blood-smear product path. Vision steps need scripts/vision_python.sh
-# (GL/X11 libs for the detector runtime); synthesis needs serve-llm running.
+# (GL/X11 libs for the detector runtime); the dashboard can manage synthesis,
+# while CLI acceptance still needs serve-llm running.
 
 # Import a blood-smear still into the v1 specimen registry.
 v1-ingest image:

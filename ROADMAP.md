@@ -1,6 +1,6 @@
 # ren — project roadmap
 
-Phase 3 protocol/audit (2026-09-09, at the audit checkpoint): local TXL-PBC and
+Historical/superseded Phase 3 protocol-audit checkpoint (2026-09-09): local TXL-PBC and
 Munich AML metadata audit is complete; the prospective protocol is frozen in
 `artifacts/phase3_protocol_v1/README.md` with its machine-readable audit.
 No Phase 3 experiment had started at that audit checkpoint. TXL-PBC has 1,260 images in its supplied
@@ -13,10 +13,11 @@ equivalents; other atypical classes remain non-blast for this task. Revisit
 Astra only if split independence, augmented-data lineage, gates, or another
 irreversible choice changes.
 
-Final protocol readiness (2026-09-09): fold2 production rehearsal passed
+Historical protocol-readiness checkpoint (2026-09-09, superseded by the
+completed fold3 evaluation below): fold2 production rehearsal passed
 complete 2,523-shard verification and exact reconstruction. Corrected reports
 A/B are byte-identical; ignored-only accounting is 3,151 total (82 retained,
-3,069 rejected), with unchanged digest. Fold3 remains locked.
+3,069 rejected), with unchanged digest. Fold3 was locked at this checkpoint.
 
 Offline-first computational cytometry & cell pathology engine. Pipeline:
 `Vision Engine -> Knowledge Retrieval -> Cognitive Synthesis -> Local Dashboard/UI`.
@@ -49,9 +50,11 @@ out to be wrong rather than silently working around it.
   trainable HoVer-Net-fast-style segmentation network. This does not permit
   fine-tuning or replacing frozen Path Foundation; it is a distinct stage with
   its own artifacts and evaluation gate.
-- **Cognitive synthesis LLMs**: `OpenBioLLM-Llama3-8B` and `MedGemma 1.5 4B
-  Q5_K_M`, GGUF, served via `llama-server`; BioMistral-7B is excluded from
-  Phase 5 and the production/default serving path.
+- **Cognitive synthesis LLM**: `MedGemma 1.5 4B Q5_K_M` GGUF is the frozen
+  production winner, selected by the blinded Phase 5 Part 2 comparison and
+  accepted on the untouched Part 3 final set. `serve-llm` serves it by default.
+  OpenBioLLM-Llama3-8B output is retained only as audit evidence; BioMistral-7B
+  is excluded from Phase 5 and the production/default serving path.
 - **Architecture philosophy**: modular, UNIX-style — small pieces
   communicating over plain interfaces (HTTP for the LLM, files/arrays between
   vision and retrieval stages), not one monolithic model or codebase.
@@ -59,44 +62,36 @@ out to be wrong rather than silently working around it.
   commercial deployment story, and keep attribution to the underlying
   foundation models/datasets intact.
 
-## Current state
+## Current state (2026-09-13)
 
-- Flake/devShells, `direnv`, `uv`-managed Python env: working.
-- `llama-server` on Vulkan confirmed working end-to-end (verified via a
-  `/v1/chat/completions` round-trip with real token/sec numbers).
-- Data:
-  - **PanNuke** — downloaded and unzipped (`fold1/2/3`, each with
-    `images.npy`/`masks.npy`/`types.npy`). Ready to use.
-  - **TXL-PBC** (PBC + Raabin-WBC, YOLO-labeled blood cells) — cloned. Ready
-    to use.
-  - **Munich AML** (blast-cell labels) — downloaded, via a Kaggle mirror
-    (sidesteps the Aspera wall entirely). `abbreviations.txt` +
-    `annotations.dat`/`annotations_augmented.dat` + `data/` (images). Ready
-    to use — Phase 3's blast-vs-non-blast task is no longer blocked.
-- Models: OpenBioLLM-8B and MedGemma 1.5 4B Q5_K_M (GGUF) are downloaded.
-  Virchow is confirmed loadable and its implementation has been audited against
-  the local checkpoint. Path Foundation is load-tested locally under TensorFlow
-  2.21 and produces the documented 384-dimensional float32 embeddings.
-  PubMedBERT is on disk but not yet load-tested; verify before relying on it.
-  Future MedCPT query/article encoders are also pinned and load-tested as
-  unselected retrieval candidates. No Phase 3/4 benchmark or Phase 5 winner
-  decision was started.
-- Phase 1 progress: Virchow embeddings were re-extracted through the validated
-  index/provenance pipeline for all folds (fold1 2656, fold2 2523, fold3 2722;
-  CLS-only, 1280-dimensional). `scripts/verify_embeddings.py` exits zero with
-  all folds passing source-image, label, shape, dtype, finiteness, duplicate,
-  and provenance checks. The Phase 1 Virchow linear probe trained on folds 1+2
-  and evaluated on fold3 at **97.06% accuracy** and **0.9562 macro-F1**, versus
-  a **28.47%** training-majority baseline. Phase 1's smoke-test criterion is met;
-  detailed results are in `embeddings/virchow/head_results.json`. Path
-  Foundation embeddings are also extracted and verified for all three folds
-  (384-dimensional, same row counts and provenance checks). Its linear probe
-  reached **94.78% accuracy** and **0.9255 macro-F1**. Virchow led by 2.28 and
-  3.07 percentage points respectively, but Path Foundation was selected for the
-  final pipeline because it extracted at roughly 24–25 images/second versus
-  Virchow's roughly 0.6 images/second and still cleared the smoke-test bar by a
-  wide margin. Detailed results are in
-  `embeddings/path-foundation/head_results.json`.
+- Runtime, Nix/direnv/uv environment, and Vulkan `llama-server` are confirmed
+  working. The production LLM is frozen MedGemma 1.5 4B Q5_K_M.
+- Phase 1 is complete with Path Foundation selected. Phase 2's sole fold-3
+  evaluation is complete and all five gates pass (detection F1 0.744162,
+  binary PQ 0.597810, end-to-end macro-F1 0.555574, Dead recall 0.337476,
+  Dead F1 0.323260).
+- Phase 3 blood completion is accepted: TXL frozen Path Foundation crop
+  macro-F1 0.990513 and AML image-level macro-F1 0.946467; AML is not
+  patient-independent and uses no augmented data.
+- Phase 4 v3 quality plus authorized latency-only recovery is accepted; the
+  bound snapshot loader is mandatory for consumers.
+- Phase 5 MedGemma selection and untouched final-set acceptance are complete.
+- Phase 6/v1.0.0 supports arbitrary blood-smear PNG/JPEG import, production
+  vision, reviewer-controlled findings, automatic deterministic retrieval,
+  frozen synthesis, sign-off/export, and loopback-only offline operation.
+- Independent browser release verification is PASS: run `63ccc38b23c2`,
+  69 scenarios/167 checks, 100.0/100, no unexpected browser failures, and
+  asserted teardown. The certification binds to implementation commit
+  `68dd88a7ef2d7262945cbf51e09df861b2012221`; documentation-only commits after
+  that run are not browser-certified. PR #16 is open; no merge has been
+  performed.
+
+> Historical Phase 2 development/readiness records below are retained for
+> auditability. They are superseded by the one-shot fold-3 result in “Phase 2
+> one-shot fold3 evaluation” below.
+
+### Historical Phase 2 development checkpoints
+
 - Phase 2 preparation: the local PanNuke mask schema has been directly audited
   and a fail-closed, architecture-neutral validator plus tests are in place.
   Astra approved a separate HoVer-Net-fast-style segmentation architecture as
@@ -159,7 +154,7 @@ out to be wrong rather than silently working around it.
   retained as the current best fold2 development candidate; Phase 2 remains
   unaccepted because the end-to-end gate remains unmet. Fold3 was untouched.
 
-## Phase 2 experiment note — bounded score adjustment (2026-09-09)
+## Historical Phase 2 experiment note — bounded score adjustment (2026-09-09, superseded)
 
 The validity-filter training defect is corrected: proposals with zero
 evaluable pixels are excluded, with counts recorded. FP diagnostics now
@@ -176,7 +171,7 @@ and binary PQ 0.596357 stayed unchanged. Dead recall/F1 are 0.427273/0.290797.
 The 0.55 gate remains unmet, so Phase 2 is not complete. Fold3 remained
 untouched.
 
-## Phase 2 appearance/context feature augmentation (2026-09-09)
+## Historical Phase 2 appearance/context feature augmentation (2026-09-09, superseded)
 
 Corrected proposal wording: the proposal-trained classifier improved full-fold2
 end-to-end macro-F1 from **0.471912** to **0.474432**, while reducing Dead F1;
@@ -191,7 +186,7 @@ augmented cache build was terminated by the environment before output, so no
 training, selection, full-fold2 evaluation, or retention decision is claimed.
 Fold3 remained untouched.
 
-## Path Foundation context comparison (2026-09-09)
+## Historical Path Foundation context comparison (2026-09-09, superseded by fold-3 acceptance)
 
 The single approved 532-column development comparison selected epoch 30 on
 monitor macro-F1 0.5565232993468779 versus 0.5133344600416373 for the control.
@@ -202,7 +197,7 @@ Astra final-readiness review before the one permitted fold3 evaluation; this
 does not constitute final Phase 2 completion or fold3 generalization.
 Historical validity-filter provenance remains unresolved.
 
-## Appearance/context repair completion (2026-09-09)
+## Historical appearance/context repair completion (2026-09-09, superseded by fold-3 acceptance)
 
 The corrected fixed-64-patch cache is published in
 `artifacts/phase2_appearance_context_classifier_v1/cache/`; the interrupted
@@ -244,8 +239,9 @@ inflammatory, connective, dead, epithelial), not just per-image tissue type.
 
 - Use HoVer-Net fast with nuclear foreground, horizontal/vertical offset, and
   five-type-plus-background branches; keep target generation, training,
-  inference, and evaluation separate. Path Foundation remains frozen and is
-  optional only for later instance features.
+  inference, and evaluation separate. Path Foundation remains frozen; the
+  accepted 532-feature classifier combines 148 nucleus appearance/context
+  features with a 384-dimensional Path Foundation patch embedding.
 - Develop on fold1→fold2, freeze all decisions, optionally refit folds1+2,
   then evaluate fold3 once. Reject checkpoints with unknown PanNuke fold
   exposure.
@@ -263,7 +259,7 @@ Goal: bring up the second data axis (blood smears) in parallel to tissue.
 
 - Detector/localizer for individual cells in a blood smear image, using
   TXL-PBC (already YOLO-labeled).
-- Classification head (frozen Virchow/path-foundation features, as in
+- Classification head (frozen Path Foundation features, as in
   Phase 1) for the cell-type taxonomy TXL-PBC provides.
 - Blast-vs-non-blast (AML) classification using Munich AML — now unblocked.
 - **Acceptance criteria**: detector localizes individual cells with
@@ -308,7 +304,8 @@ local LLM.
   correct GO terms), the synthesized note correctly reflects both — no
   hallucinated findings not present in the structured input.
 
-- **Part 2 stop (2026-09-11)**: OpenBioLLM vs MedGemma, 24 dev generations
+- **Historical Part 2 v1-contract stop (2026-09-11, superseded by v2 below)**:
+  OpenBioLLM vs MedGemma, 24 dev generations
   each, valid structured-response rate 0.0 both. No winner selected and no
   gates weakened. Part 3 awaits a prompt/decoding re-freeze decision.
 - **Part 2 v2 selection (2026-09-11)**: under the revised contract,
@@ -334,14 +331,17 @@ first-class feature, not bolted on.
 - **Acceptance criteria**: a full sample (image in, reviewable output out)
   works without touching the network at any point in the request path.
 
-- **Status (2026-09-11)**: implemented and serving — specimen catalog with
-  sealed overlays, bound-loader retrieval, frozen-path synthesis with
-  backend-owned server lifecycle, and recorded review with sign-off, all
-  loopback-only with no build step. True pyramidal WSI remains out of reach
-  of current artifacts; arbitrary-specimen ingestion and automatic
-  finding-to-retrieval wiring are v1.0.0 direction, not current behavior.
+- **Status (2026-09-13)**: implemented, browser-certified, and release-eligible
+  on the current v1 candidate. The workstation accepts arbitrary blood-smear
+  PNG/JPEG stills, runs sealed production overlays and frozen Path Foundation
+  vision, automatically derives retrieval from reviewed findings while allowing
+  manual retrieval, performs frozen MedGemma synthesis, and records sign-off and
+  export. It is loopback-only/offline in the request path. The authoritative
+  browser run is `63ccc38b23c2`: 69 scenarios, 167 checks, 100.0/100, with
+  asserted teardown. True pyramidal WSI and tissue production inference remain
+  out of scope.
 
-## Phase 2 final-readiness hardening (2026-09-09)
+## Historical Phase 2 final-readiness hardening (2026-09-09, superseded)
 
 The validity filter was the sole intentionally refitted component; all other
 components, thresholds, and model choices remained frozen. Repaired fold2
@@ -365,7 +365,7 @@ wholly untouched.
   reasons (see "Settled") — if one turns out to be a poor fit in practice,
   flag it rather than quietly substituting something else.
 
-## Nonlinear classifier evidence repair (2026-09-09)
+## Historical Phase 2 nonlinear classifier evidence repair (2026-09-09, superseded)
 
 The invalid predicted-proposal true-mask calculation was superseded. The
 repaired cache has 59,369 full-fold2 truth instances with 107 finite features;

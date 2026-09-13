@@ -1,0 +1,281 @@
+"""Ren v1.0.0 browser stability benchmark (100 points).
+
+Drives the real dashboard in headless Firefox via Playwright: clicks,
+scrolls, imports, reviews, retrieval, synthesis, sign-off, export,
+reloads, failures. Results as machine-readable JSON plus a human report.
+See README.md for prerequisites and rerun instructions.
+"""
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+from typing import Any, Awaitable, Callable
+
+ROOT = Path(__file__).resolve().parents[2]
+RESULTS = ROOT / "artifacts" / "benchmark_results" / "stability"
+UI_PORT = 8091
+UI_URL = f"http://127.0.0.1:{UI_PORT}"
+LLM_PORT = 8080
+
+TIMEOUT_ANALYZE = 240_000
+TIMEOUT_SYNTH = 240_000
+TIMEOUT_UI = 20_000
+
+
+class Ctx:
+    def __init__(self, page):
+        self.page = page
+        self.console_errors: list[str] = []
+        self.bad_responses: list[str] = []
+        self.failed_requests: list[str] = []
+        # Keep lightweight browser network events so scenarios can prove that
+        # concurrent/double actions were dispatched and accepted by the real
+        # backend, rather than inferring admission from the final DOM state.
+        self.request_events: list[dict[str, Any]] = []
+        self.response_events: list[dict[str, Any]] = []
+        self.expected_failed_requests: set[str] = set()
+        self.unexpected_failed_requests: list[str] = []
+        self.fixture_bindings: list[dict[str, str]] = []
+        page.on("console", lambda m: self.console_errors.append(m.text) if m.type == "error" else None)
+        page.on("pageerror", lambda e: self.console_errors.append(str(e)))
+        page.on("requestfailed", lambda r: self.failed_requests.append(f"{r.method} {r.url}"))
+        page.on("response", lambda r: self.bad_responses.append(f"{r.status} {r.url}") if r.status >= 500 else None)
+        page.on("request", self._record_request)
+        page.on("response", self._record_response)
+
+    @staticmethod
+    def _post_data(request) -> str | None:
+        try:
+            return request.post_data
+        except Exception:  # noqa: BLE001 - event capture must not affect scoring
+            return None
+
+    def _record_request(self, request) -> None:
+        self.request_events.append({
+            "method": request.method,
+            "url": request.url,
+            "post_data": self._post_data(request),
+        })
+
+    def _record_response(self, response) -> None:
+        request = response.request
+        self.response_events.append({
+            "method": request.method,
+            "url": response.url,
+            "status": response.status,
+            "post_data": self._post_data(request),
+        })
+
+    def errors_since(self, n):
+        return self.console_errors[n:]
+
+    def expect_failed_request(self, url_fragment: str) -> None:
+        self.expected_failed_requests.add(url_fragment)
+
+    def bind_fixture(self, key: str, specimen_id: str) -> None:
+        self.fixture_bindings.append({"key": key, "specimen_id": specimen_id})
+
+
+def check(name, ok, detail=""):
+    return {"name": name, "ok": bool(ok), "detail": str(detail)[:200]}
+
+
+def make_images(tmp: Path, tag: str = ""):
+    """Test images. With a tag, one corner pixel is varied so each benchmark
+    run imports content-unique specimens (deterministic registry ids would
+    otherwise resurrect prior runs' review state)."""
+    from PIL import Image
+
+    def _vary(img, salt=""):
+        if not tag:
+            return img
+        px = img.load()
+        seed = sum(f"{tag}:{salt}".encode()) % 251
+        px[0, 0] = (seed, (seed * 7) % 256, (seed * 13) % 256)
+        return img
+
+    imgs = {}
+    imgs["valid"] = tmp / "valid.png"
+    _vary(Image.new("RGB", (360, 363), (190, 170, 165))).save(imgs["valid"])
+    imgs["valid_c01"] = tmp / "valid_c01.png"
+    _vary(Image.new("RGB", (360, 363), (190, 170, 165)), "valid_c01").save(imgs["valid_c01"])
+    imgs["valid_g03"] = tmp / "valid_g03.png"
+    _vary(Image.new("RGB", (360, 363), (190, 170, 165)), "valid_g03").save(imgs["valid_g03"])
+    imgs["duplicate_i02"] = tmp / "duplicate_i02.png"
+    _vary(Image.new("RGB", (360, 363), (190, 170, 165)), "duplicate_i02").save(
+        imgs["duplicate_i02"])
+    imgs["repeated_i08"] = tmp / "repeated_i08.png"
+    _vary(Image.new("RGB", (360, 363), (190, 170, 165)), "repeated_i08").save(
+        imgs["repeated_i08"])
+    imgs["blank"] = tmp / "blank.png"
+    # Keep the zero-finding fixture content-unique too.  The v1 registry
+    # intentionally deduplicates by content and preserves the first upload's
+    # filename, so a deterministic blank image can otherwise inherit a stale
+    # filename from an earlier run and make name-based setup ambiguous.
+    _vary(Image.new("RGB", (300, 300), (128, 128, 128))).save(imgs["blank"])
+    imgs["blank_v02"] = tmp / "blank_v02.png"
+    _vary(Image.new("RGB", (300, 300), (128, 128, 128)), "blank_v02").save(imgs["blank_v02"])
+    imgs["blank_f09"] = tmp / "blank_f09.png"
+    _vary(Image.new("RGB", (300, 300), (128, 128, 128)), "blank_f09").save(imgs["blank_f09"])
+    imgs["rgba"] = tmp / "rgba.png"
+    Image.new("RGBA", (200, 200), (10, 20, 30, 40)).save(imgs["rgba"])
+    imgs["gray"] = tmp / "gray.png"
+    Image.new("L", (200, 200), 128).save(imgs["gray"])
+    imgs["corrupt"] = tmp / "corrupt.png"
+    imgs["corrupt"].write_bytes(b"definitely not image data at all" * 4)
+    imgs["textpng"] = tmp / "fake.png"
+    imgs["textpng"].write_bytes(b"plain text pretending to be a png file here" * 3)
+    imgs["huge"] = tmp / "huge.png"
+    Image.new("RGB", (5000, 5000), (5, 5, 5)).save(imgs["huge"])
+    imgs["r06"] = tmp / "r06.png"
+    _vary(Image.new("RGB", (300, 300), (95, 105, 115))).save(imgs["r06"])
+    imgs["r06_switch"] = tmp / "r06_switch.png"
+    _vary(Image.new("RGB", (300, 300), (95, 105, 115)), "r06_switch").save(imgs["r06_switch"])
+    imgs["w02"] = tmp / "w02.png"
+    _vary(Image.new("RGB", (300, 300), (80, 95, 110))).save(imgs["w02"])
+    return imgs
+
+
+async def import_file(page, path: Path):
+    # Direct input assignment: identical change event and backend request as
+    # the native dialog path, without dialog flakiness. The dialog opening
+    # itself is covered once by G03-dialog-opens.
+    # Returns the import-note text so callers can track created specimen ids.
+    await page.evaluate("() => { document.querySelector('#import-note').textContent = ''; }")
+    await page.set_input_files("#import-file", [])
+    await page.set_input_files("#import-file", str(path))
+    await page.wait_for_function(
+        "() => document.querySelector('#import-note').textContent.length > 0",
+        timeout=30000)
+    return await page.text_content("#import-note")
+
+
+class Bench:
+    def __init__(self, page, base_url, *, artifact_dir: Path | None = None,
+                 backend_log: Path | None = None,
+                 backend_restart: Callable[[], Awaitable[dict[str, Any]]] | None = None):
+        self.page = page
+        self.base_url = base_url
+        self.hosts: set = set()
+        self.ctx = Ctx(page)
+        self.scenarios = []
+        self.artifact_dir = artifact_dir or RESULTS
+        self.shots_dir = self.artifact_dir / "shots"
+        self.backend_log = backend_log or (self.artifact_dir / "backend.log")
+        self._backend_restart = backend_restart
+
+    async def restart_backend(self) -> dict[str, Any]:
+        if self._backend_restart is None:
+            raise RuntimeError("benchmark backend restart hook is unavailable")
+        return await self._backend_restart()
+
+    def scenario(self, sid, cat, weight):
+        def deco(fn):
+            self.scenarios.append({"id": sid, "cat": cat, "weight": weight, "fn": fn})
+            return fn
+        return deco
+
+    async def goto_app(self):
+        await self.page.goto(self.base_url + "/", wait_until="networkidle")
+        await self.page.wait_for_function("() => document.querySelectorAll('#specimens option').length > 5", timeout=TIMEOUT_UI)
+
+    async def specimen_ids(self):
+        return await self.page.eval_on_selector_all(
+            "#specimens option", "els => els.map(e => e.value)")
+
+    async def select_by_text(self, text):
+        await self.page.select_option("#specimens", label=text)
+
+    async def wait_findings(self, timeout=TIMEOUT_ANALYZE):
+        await self.page.wait_for_function(
+            "() => document.querySelectorAll('#findings .ev').length > 0", timeout=timeout)
+
+    async def findings_count(self):
+        return await self.page.eval_on_selector_all("#findings .ev", "els => els.length")
+
+    async def scroll_findings(self, y):
+        await self.page.evaluate(f"document.querySelector('#side').scrollTop = {y}")
+        return await self.page.evaluate("document.querySelector('#side').scrollTop")
+
+    async def job_text(self):
+        return await self.page.text_content("#job")
+
+    async def note_text(self):
+        return await self.page.text_content("#note")
+
+    async def run_all(self, progress_path=None, per_scenario_s=480):
+        import asyncio
+        import json as _json
+
+        results = []
+        for spec in self.scenarios:
+            t0 = time.monotonic()
+            if progress_path is not None:
+                progress_path.write_text(_json.dumps({'running': spec['id'], 'done': len(results), 'of': len(self.scenarios)}) + chr(10))
+            err0 = len(self.ctx.console_errors)
+            req0 = len(self.ctx.failed_requests)
+            bad0 = len(self.ctx.bad_responses)
+            fixture0 = len(self.ctx.fixture_bindings)
+            self.ctx.expected_failed_requests = set()
+            screenshot = None
+            try:
+                # Every scenario starts from a fresh page state.  Durable
+                # fixtures are still created/validated by the scenario itself,
+                # but stale DOM state from an earlier scenario cannot satisfy
+                # its preconditions accidentally.
+                await self.page.set_viewport_size({"width": 1440, "height": 900})
+                await self.goto_app()
+                checks = await asyncio.wait_for(spec["fn"](self), timeout=per_scenario_s)
+                crashed = False
+            except Exception as exc:  # noqa: BLE001 - a crash/timeout is a scored outcome
+                checks = [check("no-crash", False, repr(exc)[:200])]
+                crashed = True
+                try:
+                    shot = self.shots_dir / f"{spec['id']}.png"
+                    shot.parent.mkdir(parents=True, exist_ok=True)
+                    await self.page.screenshot(path=str(shot))
+                    screenshot = str(shot.relative_to(self.artifact_dir))
+                except Exception:  # noqa: BLE001
+                    pass
+            ok = sum(1 for c in checks if c["ok"])
+            score = spec["weight"] * ok / max(1, len(checks))
+            backend_tail = []
+            if ok < len(checks):
+                try:
+                    lines = self.backend_log.read_text().splitlines()
+                    backend_tail = [l[-220:] for l in lines if ("/api/" in l and (" 5" in l or " 4" in l))][-6:]
+                except Exception:  # noqa: BLE001 - forensics must never break scoring
+                    pass
+            forensics = {"backend_errors": backend_tail} if backend_tail else {}
+            new_failed_requests = self.ctx.failed_requests[req0:]
+            expected_failed_requests = [
+                request for request in new_failed_requests
+                if any(fragment in request for fragment in self.ctx.expected_failed_requests)
+            ]
+            unexpected_failed_requests = [
+                request for request in new_failed_requests if request not in expected_failed_requests
+            ]
+            self.ctx.unexpected_failed_requests.extend(unexpected_failed_requests)
+            scenario = {"id": spec["id"], "cat": spec["cat"], "weight": spec["weight"],
+                        "checks": checks, "forensics": forensics, "score": round(score, 2),
+                        "ms": int((time.monotonic() - t0) * 1000),
+                        "crashed": crashed,
+                        "new_console_errors": self.ctx.errors_since(err0),
+                        "new_failed_requests": new_failed_requests,
+                        "expected_failed_requests": expected_failed_requests,
+                        "unexpected_failed_requests": unexpected_failed_requests,
+                        "new_bad_responses": self.ctx.bad_responses[bad0:],
+                        "fixture_bindings": self.ctx.fixture_bindings[fixture0:]}
+            if screenshot is not None:
+                scenario["screenshot"] = screenshot
+            results.append(scenario)
+            if progress_path is not None:
+                progress_path.write_text(_json.dumps(
+                    {"done": len(results), "of": len(self.scenarios),
+                     "last": results[-1]["id"],
+                     "score_so_far": round(sum(r["score"] for r in results), 1)}) + "\n")
+        return results

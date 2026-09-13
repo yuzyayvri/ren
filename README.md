@@ -17,10 +17,10 @@ The project is organized as small, sequential stages with plain interfaces:
    remains frozen.
 2. **Knowledge retrieval** — local files/arrays, LanceDB, SQLite, and
    NetworkX support vector and symbolic retrieval workflows.
-3. **Cognitive synthesis** — a local `llama-server` endpoint serves GGUF
-   candidates over the OpenAI-compatible `/v1/chat/completions` API. Vulkan is
-   the intended llama.cpp backend; ROCm is reserved for optional PyTorch CV
-   acceleration.
+3. **Cognitive synthesis** — a local `llama-server` endpoint serves the frozen
+   MedGemma GGUF over the OpenAI-compatible `/v1/chat/completions` API;
+   OpenBioLLM is retained as audit evidence. Vulkan is the intended llama.cpp
+   backend; ROCm is reserved for optional PyTorch CV acceleration.
 4. **Dashboard/UI** — a local specimen-first workstation served loopback-only
    with no build step or remote dependencies: specimen imagery with sealed
    overlays, bound-loader retrieval, frozen-path synthesis, and explicit
@@ -35,21 +35,39 @@ artifacts are passed on disk, and the LLM stage communicates over HTTP.
 Ren v1 supports one modality: blood-smear stills (PNG/JPEG). Import validates
 and registers the specimen; production vision (bound YOLO detector, frozen
 Path Foundation embeddings, frozen logistic head) yields spatial WBC/RBC/
-Platelet findings; reviewer confirmation drives deterministic retrieval;
-frozen MedGemma synthesis drafts the note; review signs it. Everything runs
-locally with hash-pinned provenance. No WSI, no tissue inference, no clinical
-claims. Outputs are diagnostic-assist drafts requiring human sign-off.
+Platelet findings; reviewer confirmation automatically drives deterministic
+retrieval (manual retrieval is also available); frozen MedGemma synthesis
+drafts the note; review signs it. Everything runs locally with hash-pinned
+provenance. No WSI, no tissue inference, no clinical claims. Outputs are
+diagnostic-assist drafts requiring human sign-off.
 
 ## Current status
 
-Phases 1–6 are complete: vision scaffold with Path Foundation selected,
-one-shot PanNuke fold-3 evaluation accepted, TXL-PBC and image-level Munich
-AML blood stages complete, frozen Phase 4 v3 retrieval with latency recovery
-accepted, MedGemma selected through blinded comparison and accepted on the
-untouched final set, and the local workstation serving specimens, sealed
-overlays, retrieval, synthesis, and review. Pending direction is a v1.0.0
-refinement (arbitrary-specimen ingestion, automatic finding-to-retrieval
-wiring); see ROADMAP.md for the plan when it lands.
+Ren v1.0.0 is complete for the supported blood-smear workflow and independently
+release-verified. The certified implementation commit is
+`68dd88a7ef2d7262945cbf51e09df861b2012221`; the branch/PR has since advanced
+with documentation-only commits, without changing the certified implementation.
+The fresh unfiltered Phase 6 browser stability run (`63ccc38b23c2`) scored
+100.0/100 across 69 scenarios and 167
+checks. It had no crashes, skips, console errors, unexpected failed requests,
+or HTTP 5xx responses; the one expected failed request was the intentional S03
+dead-backend probe, and teardown was asserted.
+
+The product path accepts arbitrary blood-smear PNG/JPEG stills, runs the bound
+YOLO detector plus frozen Path Foundation/logistic head, supports reviewer
+confirmation/correction/rejection with automatic deterministic retrieval,
+produces frozen MedGemma synthesis, and records sign-off/export provenance.
+True pyramidal WSI, tissue production inference, and clinical claims remain
+out of scope; every output is a diagnostic-assist draft requiring human
+sign-off. PR #16 remains open; no merge has been performed. The authoritative
+run and independent verifier are retained in the populated checkout under
+`artifacts/benchmark_results/stability/`. The certification binds to the
+implementation commit above; subsequent documentation-only commits are not
+part of that browser run.
+
+The `v1.0.0` label is ren's workstation/product release designation. Python
+package metadata intentionally remains version `0.1.0` in `pyproject.toml` and
+is not being changed by this documentation release.
 
 Detailed decisions, acceptance criteria, and operational notes are in
 [`ROADMAP.md`](ROADMAP.md), [`AGENTS.md`](AGENTS.md), [`MEMORY.md`](MEMORY.md),
@@ -72,6 +90,15 @@ how to obtain them.
 - `dashboard/` — dependency-free static workstation frontend (no build step)
 - `protocols/phase5_v1/`, `protocols/phase5_v2/` — frozen synthesis contracts
   (v1 superseded, preserved as history)
+- `benchmarks/stability/` — 69-scenario browser stability rubric, runner, and
+  scenario definitions for the v1 workstation
+- `protocols/phase5_v3/` — frozen production synthesis prompt and decoding
+  contract (v1/v2 are retained as protocol history)
+- `protocols/phase5_v3/prompt.md` intentionally retains the frozen v2 prompt
+  heading because the production v3 freeze reuses that immutable prompt body;
+  `freeze_manifest.json` and the production path establish its v3 identity.
+  Do not edit the sealed prompt to rename the heading outside the protocol
+  freeze process.
 - `tests/` — focused regression and protocol tests
 - `docs/` — project review documentation
 - `flake.nix`, `flake.lock`, `pyproject.toml`, `uv.lock`, `Justfile` —

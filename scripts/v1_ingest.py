@@ -36,7 +36,8 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def ingest_file(source: Path, *, registry: Path | None = None) -> dict[str, Any]:
+def ingest_file(source: Path, *, registry: Path | None = None,
+                source_filename: str | None = None) -> dict[str, Any]:
     if registry is None:
         registry = REGISTRY
     raw = source.read_bytes() if source.is_file() else b""
@@ -74,7 +75,7 @@ def ingest_file(source: Path, *, registry: Path | None = None) -> dict[str, Any]
     record = {
         "schema": "v1-specimen-v1",
         "specimen_id": specimen_id,
-        "source_filename": source.name,
+        "source_filename": source_filename or source.name,
         "content_sha256": digest,
         "content_bytes": len(raw),
         "width": w,
