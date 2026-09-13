@@ -533,20 +533,25 @@ def register(B, IMG):
     # ---- retrieval (12) ----
     @S("R01-auto-no-typing", "retrieval", 3)
     async def _(b):
-        await prepared_v1(b, "txl_r01")
+        sid = await prepared_v1(b, "txl_r01")
         await b.page.fill("#query", "")
         html = await b.page.inner_html("#evidence")
         typed = await b.page.input_value("#query")
-        findings = await b.findings_count()
+        links = await b.page.eval_on_selector_all(
+            "#evidence .ev[data-fid]", "els => els.map(e => e.dataset.fid)")
+        findings = await b.page.evaluate(
+            """async id => (await (await fetch(`/api/v1/findings/${id}`)).json()).findings
+                .map(f => f.finding_id)""", sid)
         return [check("evidence-present", "GO:" in html and "automatic derivation" in html, html[:100]),
-                check("findings-grounded", findings > 0 and html.count("data-fid") >= findings, (findings, html.count("data-fid"))),
+                check("findings-grounded", links and sorted(set(links)) == sorted(set(findings))
+                      and len(links) == len(findings), (links, findings)),
                 check("no-typing-needed", typed == "", typed)]
 
     @S("R02-multiple-findings", "retrieval", 2)
     async def _(b):
         sid = await prepared_v1(b, "txl_r02")
         html = await b.page.inner_html("#evidence")
-        fids = await b.page.eval_on_selector_all("#evidence [data-fid]", "e=>e.length")
+        fids = await b.page.eval_on_selector_all("#evidence .ev[data-fid]", "e=>e.length")
         findings = await b.findings_count()
         return [check("evidence-rendered", len(html) > 50 and "GO:" in html, len(html)),
                 check("finding-links", fids == findings and fids > 0, (sid, findings, fids))]
@@ -568,7 +573,7 @@ def register(B, IMG):
             arg=fid, timeout=30000)
         await b.page.evaluate("id => v1RetrieveAll(id)", sid)
         await b.page.wait_for_function(
-            "() => document.querySelectorAll('#evidence [data-fid]').length > 0", timeout=30000)
+            "() => document.querySelectorAll('#evidence .ev[data-fid]').length > 0", timeout=30000)
         exported = await b.page.evaluate(
             """async id => await (await fetch(`/api/v1/export/${id}`)).json()""", sid)
         evidence = exported.get("evidence", {})
@@ -710,7 +715,8 @@ def register(B, IMG):
     @S("E03-finding-linkage", "evidence", 1.5)
     async def _(b):
         sid = await prepared_v1(b, "txl_e03")
-        links = await b.page.eval_on_selector_all("#evidence [data-fid]", "els => els.map(e => e.dataset.fid)")
+        links = await b.page.eval_on_selector_all(
+            "#evidence .ev[data-fid]", "els => els.map(e => e.dataset.fid)")
         findings = await b.page.evaluate(
             """async id => (await (await fetch(`/api/v1/findings/${id}`)).json()).findings
                 .map(f => f.finding_id)""", sid)
@@ -722,7 +728,7 @@ def register(B, IMG):
     @S("E04-refresh-persists", "evidence", 1)
     async def _(b):
         sid = await prepared_v1(b, "txl_e04")
-        before = await b.page.eval_on_selector_all("#evidence [data-fid]", "els => els.length")
+        before = await b.page.eval_on_selector_all("#evidence .ev[data-fid]", "els => els.length")
         await b.page.reload(wait_until="networkidle")
         await b.page.wait_for_function("() => document.querySelectorAll('#specimens option').length > 5")
         bundle = await b.page.evaluate(
@@ -965,16 +971,27 @@ def register(B, IMG):
                   origin: input.dataset.origin, rank: Number(input.dataset.rank),
                   text: input.closest('label')?.textContent || ''}));
               const key = value => `${value.fid}:${value.eid}:${value.origin}:${value.rank}`;
-              return {expected: expected.map(key).sort(), shown: shown.map(key).sort(), shown};
+              const expectedKeys = expected.map(key).sort();
+              const shownKeys = shown.map(key).sort();
+              return {expected: expectedKeys, shown: shownKeys, rows: shown};
             }""", sid)
-        rendered = (observed["shown"] and observed["shown"] == observed["expected"]
+        rendered = (observed["rows"] and observed["shown"] == observed["expected"]
                     and all("[auto]" in row["text"]
                             and "origin:" in row["text"]
                             and "rank:" in row["text"]
                             and row["origin"].startswith("auto-")
-                            and row["rank"] >= 1 for row in observed["shown"]))
+                            and row["rank"] >= 1 for row in observed["rows"]))
+        first = observed["rows"][0] if observed["rows"] else {}
+        render_detail = {"equal": observed["shown"] == observed["expected"],
+                         "count": len(observed["rows"]),
+                         "auto": "[auto]" in first.get("text", ""),
+                         "origin_label": "origin:" in first.get("text", ""),
+                         "auto_origin": first.get("origin", "").startswith("auto-"),
+                         "rank_label": "rank:" in first.get("text", ""),
+                         "rank_positive": first.get("rank", 0) >= 1,
+                         "origin": first.get("origin"), "rank": first.get("rank")}
         return [check("evidence-visible", len(html) > 50 and "GO:" in html, len(html)),
-                check("origin-rank-visible", rendered, observed)]
+                check("origin-rank-visible", rendered, render_detail)]
 
     @S("P03-digests-shown", "provenance", 1.5)
     async def _(b):
@@ -1102,7 +1119,8 @@ def register(B, IMG):
         sid = await prepared_v1(b, "txl_a02")
         await b.page.evaluate("() => { S.analysisJobIds = []; }")
         await b.page.click("#analyze")
-        await b.page.wait_for_timeout(2000)
+        await b.page.wait_for_function(
+            "() => (S.analysisJobIds || []).length > 0", timeout=30000)
         job_ids = await b.page.evaluate("() => S.analysisJobIds || []")
         if not job_ids:
             raise RuntimeError("analysis did not submit before navigation")
@@ -1268,7 +1286,7 @@ def register(B, IMG):
     async def _(b):
         await prepared_v1(b, "txl_t02")
         n = await b.findings_count()
-        evidence = await b.page.eval_on_selector_all("#evidence [data-fid]", "els => els.length")
+        evidence = await b.page.eval_on_selector_all("#evidence .ev[data-fid]", "els => els.length")
         return [check("repeat-list", n > 0, n),
                 check("repeat-evidence", evidence == n and evidence > 0, (n, evidence))]
 

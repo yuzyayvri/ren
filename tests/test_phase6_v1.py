@@ -89,6 +89,9 @@ def test_v1_retrieve_and_evidence_flow(client, monkeypatch):
         assert client.post("/api/v1/evidence", json={
             "specimen_id": specimen_id, "op": "exclude",
             "finding_id": "F1", "evidence_id": "E1"}).json()["excluded"] == "E1"
+        assert client.post("/api/v1/evidence", json={
+            "specimen_id": specimen_id, "op": "include",
+            "finding_id": "F1", "evidence_id": "E1"}).json()["included"] == "E1"
         assert client.post("/api/v1/evidence", json={"specimen_id": specimen_id,
                                                      "op": "bogus"}).status_code == 422
     finally:
