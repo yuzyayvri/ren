@@ -330,6 +330,9 @@ def register(B, IMG):
             "() => (S.analysisJobIds || []).length > 0",
             timeout=30000)
         job_id = (await b.page.evaluate("() => S.analysisJobIds || []"))[-1]
+        job_before_navigation = await b.page.evaluate(
+            """async id => await (await fetch(`/api/jobs/${id}`)).json()""", job_id)
+        nonterminal_before_navigation = job_before_navigation.get("state") in ("queued", "running")
         options = await b.page.eval_on_selector_all(
             "#specimens option", "function(els, excluded) { return els.map(e => e.value).filter(v => v !== excluded); }", sid)
         target = options[0] if options else None
@@ -344,6 +347,8 @@ def register(B, IMG):
                 await new Promise(resolve => setTimeout(resolve, 1000));
             } return "timeout"; }""", job_id)
         return [check("navigated", await b.page.input_value("#specimens") == target, target),
+                check("job-nonterminal-before-navigation", nonterminal_before_navigation,
+                      job_before_navigation),
                 check("no-uncached-crash", not errs, errs[:1]),
                 check("analysis-job-settled", state in ("done", "failed", "cancelled"), state)]
 
@@ -549,30 +554,52 @@ def register(B, IMG):
     @S("R03-rejected-excluded", "retrieval", 1.5)
     async def _(b):
         sid = await prepared_v1(b, "txl_r03")
+        before = await b.page.evaluate(
+            """async id => (await (await fetch(`/api/v1/findings/${id}`)).json()).findings""", sid)
+        before_ids = {finding["finding_id"] for finding in before}
         btn = b.page.locator("#findings button[data-act='reject']").first
         if await btn.count() == 0:
             raise RuntimeError("prepared fixture has no reject action")
         fid = await btn.get_attribute("data-fid")
+        retained_ids = before_ids - {fid}
         await btn.click()
-        await b.page.wait_for_timeout(1500)
+        await b.page.wait_for_function(
+            "fid => ![...document.querySelectorAll('#findings [data-fid]')].some(e => e.dataset.fid === fid)",
+            arg=fid, timeout=30000)
         await b.page.evaluate("id => v1RetrieveAll(id)", sid)
         await b.page.wait_for_function(
-            "fid => ![...document.querySelectorAll('#evidence [data-fid]')].some(e => e.dataset.fid === fid)", arg=fid,
-            timeout=30000)
-        evidence_fids = await b.page.eval_on_selector_all("#evidence [data-fid]", "els => els.map(e => e.dataset.fid)")
-        return [check("rejected-finding-excluded", fid not in evidence_fids, (fid, evidence_fids))]
+            "() => document.querySelectorAll('#evidence [data-fid]').length > 0", timeout=30000)
+        exported = await b.page.evaluate(
+            """async id => await (await fetch(`/api/v1/export/${id}`)).json()""", sid)
+        evidence = exported.get("evidence", {})
+        evidence_fids = set(evidence)
+        retained_evidence = {key: value for key, value in evidence.items() if key in retained_ids}
+        retained_ok = retained_ids == set(retained_evidence) and all(
+            bool(group.get("evidence")) for group in retained_evidence.values())
+        return [check("rejected-finding-excluded", fid not in evidence_fids and fid not in retained_ids,
+                       (fid, sorted(evidence_fids), sorted(retained_ids))),
+                check("non-rejected-evidence-retained", retained_ok,
+                      (sorted(retained_ids), {key: len(value.get("evidence", [])) for key, value in retained_evidence.items()}))]
 
     @S("R04-manual-override", "retrieval", 1.5)
     async def _(b):
         await prepared_v1(b, "txl_r04")
+        automatic_html = await b.page.inner_html("#evidence")
+        if "automatic derivation" not in automatic_html:
+            raise RuntimeError("manual override has no automatic baseline to replace")
         await b.page.fill("#query", "leukocyte")
         await b.page.click("#retrieve")
         await b.page.wait_for_function(
-            "() => /GO:|retrieval failed/.test(document.querySelector('#evidence').textContent || '')",
+            "() => S.lastRetrieval?.query === 'leukocyte' && "
+            "(document.querySelector('#evidence').textContent || '').includes('rank order preserved')",
             timeout=30000)
         html = await b.page.inner_html("#evidence")
         query = await b.page.input_value("#query")
-        return [check("manual-results", "GO:" in html, html[:100]),
+        retrieval = await b.page.evaluate("() => S.lastRetrieval")
+        manual = ("GO:" in html and "rank order preserved" in html
+                  and "automatic derivation" not in html and html != automatic_html
+                  and retrieval and retrieval.get("query") == "leukocyte")
+        return [check("manual-results-replace-auto", manual, html[:160]),
                 check("query-retained", query == "leukocyte", query)]
 
     @S("R05-retry-same", "retrieval", 1)
@@ -639,27 +666,58 @@ def register(B, IMG):
 
     @S("E02-exclusion", "evidence", 1.5)
     async def _(b):
-        await prepared_v1(b, "txl_e02")
-        await b.page.fill("#query", "leukocyte")
-        await b.page.click("#retrieve")
+        sid = await prepared_v1(b, "txl_e02")
         await b.page.wait_for_function(
-            "() => document.querySelectorAll('#evidence input[type=checkbox]').length > 0",
+            "() => document.querySelectorAll('#evidence input[data-v1-evidence]').length > 0",
             timeout=30000)
-        boxes = await b.page.query_selector_all("#evidence input[type=checkbox]")
+        boxes = await b.page.query_selector_all("#evidence input[data-v1-evidence]")
         if not boxes:
-            raise RuntimeError("manual retrieval returned no evidence checkboxes")
-        before = await boxes[0].is_checked()
-        await boxes[0].click()
-        await b.page.wait_for_timeout(500)
-        after = await b.page.locator("#evidence input[type=checkbox]").first.is_checked()
-        return [check("toggle-ok", before != after, (before, after))]
+            raise RuntimeError("automatic retrieval returned no evidence checkboxes")
+        box = boxes[0]
+        fid = await box.get_attribute("data-fid")
+        eid = await box.get_attribute("data-eid")
+        before = await box.is_checked()
+        if not fid or not eid or not before:
+            raise RuntimeError(f"evidence exclusion target is not an included automatic item: {(fid, eid, before)}")
+        await box.click()
+        await b.page.wait_for_function(
+            """target => fetch(`/api/v1/export/${target.sid}`).then(r => r.json()).then(bundle =>
+                !!bundle.evidence?.[target.fid]?.excluded?.some(e => e.evidence_id === target.eid))""",
+            arg={"sid": sid, "fid": fid, "eid": eid}, timeout=30000)
+        persisted_before = await b.page.evaluate(
+            """target => fetch(`/api/v1/export/${target.sid}`).then(r => r.json()).then(bundle =>
+                bundle.evidence?.[target.fid]?.excluded?.some(e => e.evidence_id === target.eid) || false)""",
+            {"sid": sid, "fid": fid, "eid": eid})
+        await b.page.reload(wait_until="networkidle")
+        await b.page.wait_for_selector("#specimens")
+        await select_by_value(b, sid)
+        await b.page.evaluate("id => v1RetrieveAll(id)", sid)
+        await b.page.wait_for_function(
+            "() => document.querySelectorAll('#evidence input[data-v1-evidence]').length > 0",
+            timeout=30000)
+        after_box = b.page.locator(f"#evidence input[data-v1-evidence][data-fid='{fid}'][data-eid='{eid}']")
+        after = await after_box.is_checked()
+        persisted_after = await b.page.evaluate(
+            """target => fetch(`/api/v1/export/${target.sid}`).then(r => r.json()).then(bundle =>
+                bundle.evidence?.[target.fid]?.excluded?.some(e => e.evidence_id === target.eid) || false)""",
+            {"sid": sid, "fid": fid, "eid": eid})
+        return [check("toggle-requested-exclusion", before and not after, (before, after, fid, eid)),
+                check("exclusion-persisted", persisted_before and persisted_after,
+                      (persisted_before, persisted_after, fid, eid)),
+                check("exclusion-restored-after-reload", not after and await after_box.count() == 1,
+                      (await after_box.count(), after))]
 
     @S("E03-finding-linkage", "evidence", 1.5)
     async def _(b):
-        await prepared_v1(b, "txl_e03")
-        html = await b.page.inner_html("#evidence")
+        sid = await prepared_v1(b, "txl_e03")
         links = await b.page.eval_on_selector_all("#evidence [data-fid]", "els => els.map(e => e.dataset.fid)")
-        return [check("linkage-visible", links and all(fid.startswith("F") for fid in links), links)]
+        findings = await b.page.evaluate(
+            """async id => (await (await fetch(`/api/v1/findings/${id}`)).json()).findings
+                .map(f => f.finding_id)""", sid)
+        expected = sorted(set(findings))
+        actual = sorted(set(links))
+        return [check("linkage-matches-findings", bool(actual) and actual == expected
+                      and len(links) == len(findings), (actual, expected, len(links), len(findings)))]
 
     @S("E04-refresh-persists", "evidence", 1)
     async def _(b):
@@ -785,6 +843,9 @@ def register(B, IMG):
         if not job_ids:
             raise RuntimeError("synthesis did not submit before refresh")
         job_id = job_ids[-1]
+        job_before_refresh = await b.page.evaluate(
+            """async id => await (await fetch(`/api/jobs/${id}`)).json()""", job_id)
+        nonterminal_before_refresh = job_before_refresh.get("state") in ("queued", "running")
         await b.page.reload(wait_until="networkidle")
         await b.page.wait_for_selector("#synthesize")
         await select_by_value(b, sid)
@@ -794,7 +855,9 @@ def register(B, IMG):
                 if (["done", "failed", "cancelled"].includes(j.state)) return j.state;
                 await new Promise(resolve => setTimeout(resolve, 1000));
             } return "timeout"; }""", job_id)
-        return [check("recovered", await b.page.input_value("#specimens") == sid, sid),
+        return [check("job-nonterminal-before-refresh", nonterminal_before_refresh,
+                      job_before_refresh),
+                check("recovered", await b.page.input_value("#specimens") == sid, sid),
                 check("backend-job-settled", state == "done", state)]
 
     @S("Y06-fail-then-retry", "synthesis", 1)
@@ -889,10 +952,29 @@ def register(B, IMG):
 
     @S("P02-origin-rank-shown", "provenance", 1.5)
     async def _(b):
-        await prepared_v1(b, "txl_p02")
+        sid = await prepared_v1(b, "txl_p02")
         html = await b.page.inner_html("#evidence")
+        observed = await b.page.evaluate(
+            """async id => {
+              const bundle = await (await fetch(`/api/v1/export/${id}`)).json();
+              const expected = Object.entries(bundle.evidence || {}).flatMap(([fid, group]) =>
+                (group.evidence || []).map(e => ({fid, eid: e.evidence_id,
+                  origin: e.origin, rank: Number(e.rank)})));
+              const shown = [...document.querySelectorAll('#evidence input[data-v1-evidence]')]
+                .map(input => ({fid: input.dataset.fid, eid: input.dataset.eid,
+                  origin: input.dataset.origin, rank: Number(input.dataset.rank),
+                  text: input.closest('label')?.textContent || ''}));
+              const key = value => `${value.fid}:${value.eid}:${value.origin}:${value.rank}`;
+              return {expected: expected.map(key).sort(), shown: shown.map(key).sort(), shown};
+            }""", sid)
+        rendered = (observed["shown"] and observed["shown"] == observed["expected"]
+                    and all("[auto]" in row["text"]
+                            and "origin:" in row["text"]
+                            and "rank:" in row["text"]
+                            and row["origin"].startswith("auto-")
+                            and row["rank"] >= 1 for row in observed["shown"]))
         return [check("evidence-visible", len(html) > 50 and "GO:" in html, len(html)),
-                check("origin-rank-visible", "[auto]" in html and "query:" in html, html[:120])]
+                check("origin-rank-visible", rendered, observed)]
 
     @S("P03-digests-shown", "provenance", 1.5)
     async def _(b):
@@ -1024,6 +1106,9 @@ def register(B, IMG):
         job_ids = await b.page.evaluate("() => S.analysisJobIds || []")
         if not job_ids:
             raise RuntimeError("analysis did not submit before navigation")
+        job_before_navigation = await b.page.evaluate(
+            """async id => await (await fetch(`/api/jobs/${id}`)).json()""", job_ids[-1])
+        nonterminal_before_navigation = job_before_navigation.get("state") in ("queued", "running")
         options = await b.page.evaluate(
             "(excluded) => [...document.querySelectorAll('#specimens option')].map(o => o.value).filter(v => v !== excluded)",
             sid)
@@ -1039,6 +1124,8 @@ def register(B, IMG):
                 await new Promise(resolve => setTimeout(resolve, 1000));
             } return "timeout"; }""", job_ids[-1])
         return [check("navigated", await b.page.input_value("#specimens") == target, target),
+                check("job-nonterminal-before-navigation", nonterminal_before_navigation,
+                      job_before_navigation),
                 check("no-uncached-crash", not errs, errs[:1]),
                 check("job-settled", state in ("done", "failed", "cancelled"), state)]
 

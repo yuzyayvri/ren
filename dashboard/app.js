@@ -365,8 +365,27 @@ async function v1RetrieveAll(id = S.specimens[S.index].id) {
     `<div class="dim">automatic derivation (v1-query-derivation-v1), ${r.evidence} items</div>` +
     Object.entries(r.sets || {}).map(([fid, g]) =>
       `<div class="ev" data-fid="${fid}"><span class="mono">${fid}</span> <span class="dim">query: ${g.query}</span><br>` +
-      g.evidence.map((e) => `<span class="mono">${e.evidence_id}</span> ${e.go_id} <span class="dim">[auto]</span>`).join("<br>") +
+      g.evidence.map((e) => {
+        const excluded = (g.excluded || []).some((x) => x.evidence_id === e.evidence_id);
+        const origin = e.origin || `auto-${g.rule}`;
+        return `<label><input type="checkbox" data-v1-evidence data-fid="${fid}" data-eid="${e.evidence_id}" data-origin="${origin}" data-rank="${e.rank}" ${excluded ? "" : "checked"}>` +
+          ` <span class="mono">${e.evidence_id}</span> ${e.go_id} <span class="dim">[auto] origin: ${origin}; rank: ${e.rank}</span></label>`;
+      }).join("<br>") +
       `</div>`).join("");
+  document.querySelectorAll("#evidence input[data-v1-evidence]").forEach((box) => {
+    box.addEventListener("change", async () => {
+      const op = box.checked ? "include" : "exclude";
+      box.disabled = true;
+      try {
+        await api("/api/v1/evidence", {method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({specimen_id: id, op, finding_id: box.dataset.fid,
+            evidence_id: box.dataset.eid, reviewer: "workstation"})});
+      } catch (e) {
+        box.checked = !box.checked;
+        $("st-job").textContent = `evidence ${op} failed: ${e.message}`;
+      } finally { box.disabled = false; }
+    });
+  });
 }
 async function v1Synthesize(id = S.specimens[S.index].id) {
   const token = ++S.jobToken;

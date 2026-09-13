@@ -598,6 +598,9 @@ def create_app() -> Any:
                 retrieval.exclude_evidence(directory, body["finding_id"], body["evidence_id"],
                                            reviewer=body.get("reviewer", "local"))
                 return {"excluded": body["evidence_id"]}
+            if body.get("op") == "include":
+                retrieval.include_evidence(directory, body["finding_id"], body["evidence_id"])
+                return {"included": body["evidence_id"]}
             if body.get("op") == "add":
                 return retrieval.add_manual_evidence(directory, body["finding_id"], body["go_id"],
                                                      reviewer=body.get("reviewer", "local"))

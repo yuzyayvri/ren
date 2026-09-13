@@ -68,6 +68,35 @@ def test_selection_origins_and_exclusion(tmp_path):
         retrieve.exclude_evidence(directory, "F9", "E1")
 
 
+def test_save_preserves_exclusion_across_retrieval_and_include_restores(tmp_path):
+    directory = tmp_path / "spec"
+    directory.mkdir()
+    first = {"F1": {"query": "q", "rule": "r", "qualifier": "observed",
+                     "retrieved_unix": 1.0,
+                     "evidence": [{"evidence_id": "E1", "go_id": "GO:0002443",
+                                   "name": "n", "definition": "d", "rank": 1,
+                                   "mode": "hybrid", "query": "q", "origin": "auto-r",
+                                   "finding_id": "F1"}],
+                     "excluded": [], "manual_adds": []}}
+    retrieve.save_evidence(directory, first)
+    retrieve.exclude_evidence(directory, "F1", "E1", reviewer="reviewer")
+
+    refreshed = {"F1": {"query": "q", "rule": "r", "qualifier": "observed",
+                         "retrieved_unix": 2.0,
+                         "evidence": [{"evidence_id": "E1", "go_id": "GO:0002443",
+                                       "name": "n", "definition": "d", "rank": 1,
+                                       "mode": "hybrid", "query": "q", "origin": "auto-r",
+                                       "finding_id": "F1"}],
+                         "excluded": [], "manual_adds": []}}
+    retrieve.save_evidence(directory, refreshed)
+    saved = retrieve._load_sets(directory)
+    assert saved["F1"]["excluded"] == [{"evidence_id": "E1", "reviewer": "reviewer"}]
+    assert retrieve.selected_evidence(directory) == []
+
+    retrieve.include_evidence(directory, "F1", "E1")
+    assert [entry["evidence_id"] for entry in retrieve.selected_evidence(directory)] == ["E1"]
+
+
 def test_packet_context_caps_per_finding(tmp_path):
     from scripts import v1_retrieve as retrieve
 
